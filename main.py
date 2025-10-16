@@ -83,6 +83,7 @@ async def on_shutdown(bot_instance: Bot):
         logger.error(f"Ошибка удаления webhook: {e}", extra={'prefix': 'ERROR'})
     logger.info("Бот остановлен.", extra={'prefix': 'BOT'})
 
+
 async def webhook_handle(request):
     """Обработчик входящих запросов от Telegram."""
     url = str(request.url)
@@ -98,6 +99,10 @@ async def webhook_handle(request):
     except Exception as e:
         logger.error(f"Ошибка обработки webhook: {e}", extra={'prefix': 'ERROR'})
     return web.Response()
+
+# Глобальное приложение для gunicorn
+app = web.Application()
+app.router.add_post(f"/{WEBHOOK_PATH}/{config.BOT_TOKEN}", webhook_handle)
 
 def main():
     """Основная функция запуска."""
@@ -126,12 +131,6 @@ def main():
     dp.startup.register(on_startup)
     logger.info("[HOOK] Регистрация on_shutdown", extra={'prefix': 'BOT'})
     dp.shutdown.register(on_shutdown)
-
-    # Настройка веб-приложения для вебхука
-    logger.info("[WEB] Настройка веб-приложения для webhook", extra={'prefix': 'TELEGRAM'})
-    app = web.Application()
-    app.router.add_post(f"/{WEBHOOK_PATH}/{config.BOT_TOKEN}", webhook_handle)
-    logger.info(f"[WEB] Роутер webhook добавлен: /{WEBHOOK_PATH}/{config.BOT_TOKEN}", extra={'prefix': 'TELEGRAM'})
 
     # Отключаем стандартный логгер aiohttp
     aiohttp_loggers = ["aiohttp.access", "aiohttp.server", "aiohttp.web", "aiohttp.websocket"]
