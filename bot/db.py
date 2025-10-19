@@ -1,4 +1,3 @@
-import asyncpg
 
 GROUPS_TABLE = """
 CREATE TABLE IF NOT EXISTS groups (

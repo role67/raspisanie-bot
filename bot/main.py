@@ -5,7 +5,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 import asyncpg
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
 from bot.handlers import router as main_router
@@ -21,7 +20,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-ADMINS = [int(admin_id) for admin_id in os.getenv("ADMINS", "").split(",")]
+def _parse_admins(env_value):
+    admins = []
+    for admin_id in env_value.split(","):
+        admin_id = admin_id.strip()
+        if admin_id.isdigit():
+            admins.append(int(admin_id))
+    return admins
+
+ADMINS = _parse_admins(os.getenv("ADMINS", ""))
 PORT = int(os.getenv("PORT", 8080))
 
 async def create_pool():

@@ -1,7 +1,6 @@
 import pandas as pd
 import requests
 from io import BytesIO
-from openpyxl import load_workbook
 from docx import Document
 
 SCHEDULE_URL = "https://www.nkptiu.ru/doc/raspisanie/raspisanie.xls"

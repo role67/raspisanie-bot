@@ -1,8 +1,7 @@
-from aiogram import Router, F, types
+from aiogram import Router, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from datetime import datetime, timedelta
+from datetime import datetime
 import asyncpg
 
 router = Router()

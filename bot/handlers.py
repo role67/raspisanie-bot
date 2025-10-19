@@ -1,14 +1,11 @@
 import logging
 from aiogram import Router, F, types
-from aiogram.filters import Command, CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import CommandStart
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram import Bot
-from datetime import datetime
-import asyncpg
-import os
 
 router = Router()
 

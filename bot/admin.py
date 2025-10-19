@@ -1,6 +1,5 @@
-from aiogram import Router, types, F
+from aiogram import Router, types
 from aiogram.filters import Command
-from datetime import datetime, timedelta
 import asyncpg
 import os
 
