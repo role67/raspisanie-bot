@@ -9,17 +9,57 @@ from aiogram import Bot
 
 router = Router()
 
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+import os
+
+ADMINS = [int(x) for x in os.getenv("ADMINS", "").split(",") if x]
+
+def get_main_menu(is_admin: bool = False):
+    # Кнопки для всех пользователей
+    buttons = [
+        [KeyboardButton(text="Расписание 📝"), KeyboardButton(text="Замены ✏️")],
+        [KeyboardButton(text="Время 🕒"), KeyboardButton(text="Профиль 🧑")]
+    ]
+    # Можно добавить админские кнопки, если нужно
+    if is_admin:
+        buttons.append([KeyboardButton(text="Админ панель 🛠")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, input_field_placeholder="НКПТиУ Лучший")
+
 class ProfileStates(StatesGroup):
     choosing_group = State()
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, pool=None):
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📚 Выбрать группу", callback_data="show_groups")
+    is_admin = message.from_user.id in ADMINS
+    menu = get_main_menu(is_admin)
     await message.answer(
-        "👋 Привет! Я бот расписания колледжа. Нажмите кнопку ниже, чтобы выбрать свою группу:",
-        reply_markup=builder.as_markup()
+        "👋 Привет! Я бот расписания колледжа. Выберите действие через меню ниже:",
+        reply_markup=menu
     )
+
+# Обработчики нажатий на кнопки главного меню
+@router.message(F.text == "Расписание 📝")
+async def main_schedule(message: types.Message, bot):
+    await message.answer("📅 Для просмотра расписания выберите свою группу через /start или используйте меню выбора группы.")
+
+@router.message(F.text == "Замены ✏️")
+async def main_replacements(message: types.Message, bot):
+    await message.answer("🔄 Для просмотра замен выберите свою группу через /start или используйте меню выбора группы.")
+
+@router.message(F.text == "Время 🕒")
+async def main_time(message: types.Message, bot):
+    await message.answer("⏰ Для отображения времени до следующей пары используйте команду /time.")
+
+@router.message(F.text == "Профиль 🧑")
+async def main_profile(message: types.Message, bot):
+    await message.answer("👤 Для просмотра профиля используйте команду /profile.")
+
+@router.message(F.text == "Админ панель 🛠")
+async def main_admin_panel(message: types.Message, bot):
+    if message.from_user.id in ADMINS:
+        await message.answer("🛠 Добро пожаловать в админ-панель! Используйте /stats и /groups для статистики.")
+    else:
+        await message.answer("⛔️ Доступ только для админов!")
 
 GROUPS_PER_PAGE = 15
 
