@@ -41,12 +41,21 @@ async def on_startup(app: web.Application, webhook_url=None):
 
 async def on_shutdown(app: web.Application):
     bot = app['bot']
-    await bot.delete_webhook()
-    await bot.session.close()
-    
-    # Закрываем пул соединений с базой данных
+    # Close database pool first
     if 'db_pool' in app:
-        await app['db_pool'].close()
+        try:
+            pool = app['db_pool']
+            await pool.expire_connections()
+            await pool.close()
+        except Exception as e:
+            logging.error(f"Error closing database pool: {e}")
+    
+    # Then close bot session and webhook
+    try:
+        await bot.delete_webhook()
+        await bot.session.close()
+    except Exception as e:
+        logging.error(f"Error closing bot session: {e}")
 
 async def main():
     # Настраиваем логирование
@@ -62,11 +71,16 @@ async def main():
             DATABASE_URL,
             min_size=2,
             max_size=10,
-            command_timeout=60,
+            command_timeout=30,  # Reduced timeout
             max_queries=50000,
-            max_inactive_connection_lifetime=300.0
+            max_inactive_connection_lifetime=180.0,  # Reduced lifetime
+            server_settings={
+                'application_name': 'raspisanie_bot',
+                'statement_timeout': '30000',  # 30 seconds
+                'idle_in_transaction_session_timeout': '30000'  # 30 seconds
+            }
         )
-        # Сохраняем пул в объекте бота
+        # Сохраняем пул в объекте бота и приложении
         bot.db_pool = pool
         
         # Проверяем соединение
