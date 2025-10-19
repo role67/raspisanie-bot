@@ -35,7 +35,7 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, poo
 
     # Получаем список групп из базы
     try:
-        pool = getattr(callback.bot, 'db_pool', pool)
+        pool = callback.bot.db_pool if hasattr(callback.bot, 'db_pool') else pool
         if not pool:
             await callback.answer("Ошибка подключения к базе данных", show_alert=True)
             return
@@ -122,7 +122,7 @@ async def get_schedule_text(group: str) -> str:
 async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot, pool=None):
     group = callback.data.replace("group_", "")
     try:
-        pool = getattr(callback.bot, 'db_pool', pool)
+        pool = callback.bot.db_pool if hasattr(callback.bot, 'db_pool') else pool
         if not pool:
             await callback.answer("Ошибка подключения к базе данных", show_alert=True)
             return
