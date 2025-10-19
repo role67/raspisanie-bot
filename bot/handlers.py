@@ -29,13 +29,15 @@ GROUPS_PER_PAGE = 15
 @router.callback_query(F.data.startswith("page_"))
 @router.callback_query(F.data == "show_groups")
 async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, pool=None):
+    await callback.answer() # Answer callback immediately
+
     current_page = 0
     if callback.data.startswith("page_"):
         current_page = int(callback.data.split("_")[1])
 
     # Получаем список групп из базы
     try:
-        pool = callback.bot.db_pool if hasattr(callback.bot, 'db_pool') else pool
+        pool = callback.bot.dispatcher['db'] if hasattr(callback.bot, 'dispatcher') and 'db' in callback.bot.dispatcher else pool
         if not pool:
             await callback.answer("Ошибка подключения к базе данных", show_alert=True)
             return
@@ -121,8 +123,9 @@ async def get_schedule_text(group: str) -> str:
 @router.callback_query(F.data.startswith("group_"))
 async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot, pool=None):
     group = callback.data.replace("group_", "")
+    await callback.answer() # Answer callback immediately
     try:
-        pool = callback.bot.db_pool if hasattr(callback.bot, 'db_pool') else pool
+        pool = callback.bot.dispatcher['db'] if hasattr(callback.bot, 'dispatcher') and 'db' in callback.bot.dispatcher else pool
         if not pool:
             await callback.answer("Ошибка подключения к базе данных", show_alert=True)
             return
