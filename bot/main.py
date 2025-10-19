@@ -31,7 +31,12 @@ async def on_startup(app: web.Application, webhook_url=None):
     bot = app['bot']
     if webhook_url is None:
         webhook_url = os.getenv("WEBHOOK_URL", "https://raspisanie-bot-ozca.onrender.com")
-    await bot.set_webhook(f"{webhook_url}{WEBHOOK_PATH}")
+    
+    webhook_secret = os.getenv("WEBHOOK_SECRET")
+    await bot.set_webhook(
+        url=f"{webhook_url}{WEBHOOK_PATH}",
+        secret_token=webhook_secret
+    )
     logging.info(f"Webhook установлен на {webhook_url}{WEBHOOK_PATH}")
 
 async def on_shutdown(app: web.Application):
@@ -63,8 +68,13 @@ async def main():
     # Настраиваем вебхук
     app = web.Application()
     app['bot'] = bot
-    webhook_secret = os.getenv("WEBHOOK_SECRET", "")  # Добавляем секрет для безопасности
-
+    
+    # Получаем и проверяем webhook_secret
+    webhook_secret = os.getenv("WEBHOOK_SECRET")
+    if not webhook_secret:
+        logging.warning("WEBHOOK_SECRET не установлен!")
+        webhook_secret = None
+    
     # Настраиваем обработчик вебхука
     SimpleRequestHandler(
         dispatcher=dp,
