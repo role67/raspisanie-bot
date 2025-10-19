@@ -9,7 +9,7 @@ router = Router()
 
 @router.message(Command("profile"))
 async def profile(message: types.Message, bot):
-    pool: asyncpg.Pool = bot['db']
+    pool: asyncpg.Pool = message.bot.dispatcher['db']
     async with pool.acquire() as conn:
         user = await conn.fetchrow("SELECT group_name FROM users WHERE user_id=$1", message.from_user.id)
     group = user['group_name'] if user else 'Не выбрана'
@@ -25,7 +25,7 @@ async def change_group(message: types.Message, bot, state):
     await state.set_state("ProfileStates:choosing_group")
 
 async def group_keyboard(bot):
-    pool: asyncpg.Pool = bot['db']
+    pool: asyncpg.Pool = bot.dispatcher['db']
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT DISTINCT group_name FROM schedule ORDER BY group_name")
     builder = InlineKeyboardBuilder()
@@ -35,7 +35,7 @@ async def group_keyboard(bot):
 
 @router.message(Command("time"))
 async def time_to_lesson(message: types.Message, bot):
-    pool: asyncpg.Pool = bot['db']
+    pool: asyncpg.Pool = message.bot.dispatcher['db']
     async with pool.acquire() as conn:
         user = await conn.fetchrow("SELECT group_name FROM users WHERE user_id=$1", message.from_user.id)
         if not user or not user['group_name']:
