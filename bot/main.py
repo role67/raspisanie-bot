@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 import asyncpg
 
 load_dotenv()
@@ -19,7 +20,7 @@ from .admin import router as admin_router
 import asyncio
 
 async def main():
-    bot = Bot(token=BOT_TOKEN, parse_mode='HTML')
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
     pool = await asyncpg.create_pool(DATABASE_URL)
     await create_tables(pool)
