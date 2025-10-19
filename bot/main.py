@@ -21,6 +21,9 @@ import asyncio
 
 async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+    # Удаляем webhook перед запуском бота
+    await bot.delete_webhook(drop_pending_updates=True)
+    
     dp = Dispatcher()
     pool = await asyncpg.create_pool(DATABASE_URL)
     await create_tables(pool)
