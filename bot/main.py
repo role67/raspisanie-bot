@@ -95,8 +95,7 @@ async def main():
     logging.info(f"Добавлено {groups_added} групп в базу данных")
 
     # Настраиваем apscheduler
-    scheduler = AsyncIOScheduler()
-    setup_scheduler()
+    scheduler = setup_scheduler(app)
     
     # Configure webhook
     webhook_requests_handler = SimpleRequestHandler(

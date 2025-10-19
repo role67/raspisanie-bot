@@ -1,113 +1,58 @@
-import pandas as pd
-import requests
-from io import BytesIO
-from openpyxl import load_workbook
-from docx import Document
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from .parsers.schedule import fetch_schedule, fetch_replacements
+import asyncio
+import logging
 
-SCHEDULE_URL = "https://www.nkptiu.ru/doc/raspisanie/raspisanie.xls"
-REPLACEMENTS_URL = "https://www.nkptiu.ru/doc/raspisanie/zameni.docx"
+__all__ = ['setup_scheduler']
 
-
-def fetch_schedule():
-    """Получает и парсит основное расписание"""
+async def update_data(pool):
+    """Обновляет данные расписания и замен в БД"""
     try:
-        resp = requests.get(SCHEDULE_URL)
-        resp.raise_for_status()
-        xls = BytesIO(resp.content)
-        df = pd.read_excel(xls, engine='xlrd')
+        schedule = fetch_schedule()
+        replacements = fetch_replacements()
         
-        # Очищаем и форматируем данные
-        schedule_data = {}
-        
-        # Предполагаем, что первая строка - это заголовки с группами
-        # Первый столбец обычно содержит время/номер пары
-        for col in df.columns[1:]:  # Пропускаем первый столбец с временем
-            if str(col).strip() and str(col).strip() != 'nan':
-                group_name = str(col).strip()
-                schedule_data[group_name] = []
+        async with pool.acquire() as conn:
+            # Начинаем транзакцию
+            async with conn.transaction():
+                # Очищаем старые данные
+                await conn.execute("DELETE FROM schedule")
+                await conn.execute("DELETE FROM replacements")
                 
-                # Проходим по каждой строке для данной группы
-                for idx, row in df.iterrows():
-                    time = str(row.iloc[0]).strip()  # Время/номер пары
-                    subject = str(row[col]).strip()  # Предмет для данной группы
-                    
-                    if subject and subject != 'nan':
-                        schedule_data[group_name].append({
-                            'time': time,
-                            'subject': subject
-                        })
+                # Вставляем новое расписание
+                if schedule:
+                    for group, lessons in schedule.items():
+                        for lesson in lessons:
+                            await conn.execute("""
+                                INSERT INTO schedule (group_name, lesson_number, subject, time)
+                                VALUES ($1, $2, $3, $4)
+                            """, group, lesson.get('lesson_number'), lesson.get('subject'), lesson.get('time'))
+                
+                # Вставляем замены
+                if replacements:
+                    for group, dates in replacements.items():
+                        for date, changes in dates.items():
+                            for change in changes:
+                                await conn.execute("""
+                                    INSERT INTO replacements (date, group_name, lesson_number, new_subject, classroom)
+                                    VALUES ($1, $2, $3, $4, $5)
+                                """, date, group, change.get('lesson'), change.get('subject'), change.get('room'))
         
-        return schedule_data
+        logging.info('Данные успешно обновлены')
     except Exception as e:
-        print(f"Ошибка при получении расписания: {e}")
-        return {}
+        logging.error(f'Ошибка при обновлении данных: {e}')
 
-def fetch_replacements():
-    """Получает и парсит замены в расписании"""
-    try:
-        resp = requests.get(REPLACEMENTS_URL)
-        resp.raise_for_status()
-        doc = Document(BytesIO(resp.content))
-        
-        replacements_data = {}
-        current_date = None
-        
-        for table in doc.tables:
-            for row in table.rows:
-                cells = [cell.text.strip() for cell in row.cells]
-                
-                # Проверяем, является ли первая ячейка датой
-                if len(cells) >= 1 and "20" in cells[0]:  # Примерная проверка на дату
-                    current_date = cells[0]
-                    continue
-                
-                # Пропускаем пустые строки
-                if not any(cells):
-                    continue
-                
-                # Парсим данные замены
-                if len(cells) >= 4:  # Минимум: группа, пара, предмет, кабинет
-                    group = cells[0].strip()
-                    if group:
-                        if group not in replacements_data:
-                            replacements_data[group] = {}
-                        if current_date not in replacements_data[group]:
-                            replacements_data[group][current_date] = []
-                            
-                        replacement = {
-                            'lesson': cells[1],
-                            'subject': cells[2],
-                            'room': cells[3]
-                        }
-                        replacements_data[group][current_date].append(replacement)
-        
-        return replacements_data
-    except Exception as e:
-        print(f"Ошибка при получении замен: {e}")
-        return {}
-
-def extract_groups_from_schedule():
-    try:
-        schedule_data = fetch_schedule()
-        # Получаем список групп из ключей словаря
-        groups = list(schedule_data.keys())
-        # Фильтруем и очищаем названия групп
-        cleaned_groups = []
-        for group in groups:
-            group = str(group).strip()
-            if group and group not in ['Время', 'Дата', 'День', '']:
-                cleaned_groups.append(group)
-        return sorted(list(set(cleaned_groups)))  # Убираем дубликаты и сортируем
-    except Exception as e:
-        print(f"Ошибка при извлечении групп: {e}")
-        return []
-
-# Для теста:
-if __name__ == "__main__":
-    schedule = fetch_schedule()
-    print(schedule.head())
-    replacements = fetch_replacements()
-    print(replacements)
-    groups = extract_groups_from_schedule()
-    print("Найденные группы:", groups)
-
+def setup_scheduler(app):
+    """Настраивает планировщик обновления данных"""
+    scheduler = AsyncIOScheduler()
+    pool = app['db_pool']
+    
+    scheduler.add_job(
+        lambda: asyncio.create_task(update_data(pool)), 
+        'interval', 
+        minutes=20,
+        id='update_schedule_job',
+        replace_existing=True
+    )
+    
+    scheduler.start()
+    return scheduler

@@ -14,7 +14,7 @@ def fetch_schedule():
         resp = requests.get(SCHEDULE_URL)
         resp.raise_for_status()
         xls = BytesIO(resp.content)
-        df = pd.read_excel(xls, engine='openpyxl')
+        df = pd.read_excel(xls, engine='xlrd')
         
         # Очищаем и форматируем данные
         schedule_data = {}
@@ -88,16 +88,16 @@ def fetch_replacements():
 
 def extract_groups_from_schedule():
     try:
-        df = fetch_schedule()
-        # Предполагаем, что группы находятся в заголовках столбцов
-        groups = []
-        for col in df.columns:
-            # Очищаем названия групп от лишних пробелов и проверяем формат
-            col = str(col).strip()
-            # Здесь можно добавить валидацию формата группы
-            if col and col not in ['Время', 'Дата', 'День', '']:
-                groups.append(col)
-        return sorted(list(set(groups)))  # Убираем дубликаты и сортируем
+        schedule_data = fetch_schedule()
+        # Получаем список групп из ключей словаря
+        groups = list(schedule_data.keys())
+        # Фильтруем и очищаем названия групп
+        cleaned_groups = []
+        for group in groups:
+            group = str(group).strip()
+            if group and group not in ['Время', 'Дата', 'День', '']:
+                cleaned_groups.append(group)
+        return sorted(list(set(cleaned_groups)))  # Убираем дубликаты и сортируем
     except Exception as e:
         print(f"Ошибка при извлечении групп: {e}")
         return []
