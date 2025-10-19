@@ -13,29 +13,28 @@ def fetch_schedule():
         resp = requests.get(SCHEDULE_URL)
         resp.raise_for_status()
         xls = BytesIO(resp.content)
-        df = pd.read_excel(xls, engine='xlrd')
-        
-        # Очищаем и форматируем данные
+        try:
+            df = pd.read_excel(xls, engine='xlrd')
+        except Exception as e:
+            print(f"Ошибка чтения xls: {e}")
+            print(f"Размер файла: {len(resp.content)} байт")
+            return {}
+        print("df.head():", df.head())
+        print("df.columns:", df.columns)
         schedule_data = {}
-        
-        # Предполагаем, что первая строка - это заголовки с группами
-        # Первый столбец обычно содержит время/номер пары
-        for col in df.columns[1:]:  # Пропускаем первый столбец с временем
+        for col in df.columns[1:]:
             if str(col).strip() and str(col).strip() != 'nan':
                 group_name = str(col).strip()
                 schedule_data[group_name] = []
-                
-                # Проходим по каждой строке для данной группы
                 for idx, row in df.iterrows():
-                    time = str(row.iloc[0]).strip()  # Время/номер пары
-                    subject = str(row[col]).strip()  # Предмет для данной группы
-                    
+                    time = str(row.iloc[0]).strip()
+                    subject = str(row[col]).strip()
                     if subject and subject != 'nan':
                         schedule_data[group_name].append({
                             'time': time,
                             'subject': subject
                         })
-        
+        print("schedule_data.keys():", list(schedule_data.keys()))
         return schedule_data
     except Exception as e:
         print(f"Ошибка при получении расписания: {e}")
@@ -47,39 +46,33 @@ def fetch_replacements():
         resp = requests.get(REPLACEMENTS_URL)
         resp.raise_for_status()
         doc = Document(BytesIO(resp.content))
-        
+        print(f"doc.tables: {len(doc.tables)} таблиц")
         replacements_data = {}
         current_date = None
-        
-        for table in doc.tables:
-            for row in table.rows:
+        for table_idx, table in enumerate(doc.tables):
+            print(f"Таблица {table_idx}, строк: {len(table.rows)}")
+            for row_idx, row in enumerate(table.rows):
                 cells = [cell.text.strip() for cell in row.cells]
-                
-                # Проверяем, является ли первая ячейка датой
-                if len(cells) >= 1 and "20" in cells[0]:  # Примерная проверка на дату
+                print(f"Row {row_idx}: {cells}")
+                if len(cells) >= 1 and "20" in cells[0]:
                     current_date = cells[0]
                     continue
-                
-                # Пропускаем пустые строки
                 if not any(cells):
                     continue
-                
-                # Парсим данные замены
-                if len(cells) >= 4:  # Минимум: группа, пара, предмет, кабинет
+                if len(cells) >= 4:
                     group = cells[0].strip()
                     if group:
                         if group not in replacements_data:
                             replacements_data[group] = {}
                         if current_date not in replacements_data[group]:
                             replacements_data[group][current_date] = []
-                            
                         replacement = {
                             'lesson': cells[1],
                             'subject': cells[2],
                             'room': cells[3]
                         }
                         replacements_data[group][current_date].append(replacement)
-        
+        print("replacements_data.keys():", list(replacements_data.keys()))
         return replacements_data
     except Exception as e:
         print(f"Ошибка при получении замен: {e}")
