@@ -43,6 +43,10 @@ async def on_shutdown(app: web.Application):
     bot = app['bot']
     await bot.delete_webhook()
     await bot.session.close()
+    
+    # Закрываем пул соединений с базой данных
+    if 'db_pool' in app:
+        await app['db_pool'].close()
 
 async def main():
     # Настраиваем логирование
@@ -52,14 +56,30 @@ async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
 
-    # Инициализируем базу данных
-    pool = await asyncpg.create_pool(DATABASE_URL)
-    await create_tables(pool)
-    await init_groups(pool)
-    
-    # Подключаем middleware и роутеры
-    dp.message.middleware(DbMiddleware(pool))
-    dp.callback_query.middleware(DbMiddleware(pool))
+    # Инициализируем базу данных с максимальным количеством соединений
+    try:
+        pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=2,
+            max_size=10,
+            command_timeout=60,
+            max_queries=50000,
+            max_inactive_connection_lifetime=300.0
+        )
+        
+        # Проверяем соединение
+        async with pool.acquire() as conn:
+            await conn.execute('SELECT 1')
+            
+        await create_tables(pool)
+        await init_groups(pool)
+        
+        # Подключаем middleware и роутеры
+        dp.message.middleware(DbMiddleware(pool))
+        dp.callback_query.middleware(DbMiddleware(pool))
+    except Exception as e:
+        logging.error(f"Database initialization error: {e}")
+        raise
     dp.include_router(main_router)
     dp.include_router(features_router)
     dp.include_router(admin_router)
@@ -68,6 +88,7 @@ async def main():
     # Настраиваем вебхук
     app = web.Application()
     app['bot'] = bot
+    app['db_pool'] = pool
     
     # Получаем и проверяем webhook_secret
     webhook_secret = os.getenv("WEBHOOK_SECRET")
