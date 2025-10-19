@@ -102,3 +102,39 @@ def extract_groups_from_schedule():
         for group in groups:
             group = str(group).strip()
             if group and group not in ['Время', 'Дата', 'День', '']:
+                cleaned_groups.append(group)
+        return sorted(list(set(cleaned_groups)))  # Убираем дубликаты и сортируем
+    except Exception as e:
+        print(f"Ошибка при извлечении групп: {e}")
+        return []
+
+# Для теста:
+
+def format_schedule_for_group(group_lessons):
+    """
+    Форматирует расписание для группы в красивый текст для Telegram.
+    group_lessons: список занятий (dict с ключами lesson_number, time, subject, teacher, room)
+    """
+    if not group_lessons:
+        return "Расписание не найдено."
+    lines = []
+    for lesson in group_lessons:
+        num = lesson.get('lesson_number', '')
+        time = lesson.get('time', '')
+        subject = lesson.get('subject', '')
+        teacher = lesson.get('teacher', '')
+        room = lesson.get('room', '')
+        line = f"{num}. {time}\n{subject}\n{teacher} | {room}"
+        lines.append(line)
+    return '\n\n'.join(lines)
+
+# Для теста:
+if __name__ == "__main__":
+    schedule = fetch_schedule()
+    for group, lessons in schedule.items():
+        print(f"\nРасписание для группы {group}:")
+        print(format_schedule_for_group(lessons))
+    replacements = fetch_replacements()
+    print(replacements)
+    groups = extract_groups_from_schedule()
+    print("Найденные группы:", groups)
