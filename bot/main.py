@@ -26,13 +26,13 @@ def is_bot_running():
 
 
 
-from .db import create_tables, update_groups_list
+from .db import create_tables
 from .handlers import router as main_router
 from .features import router as features_router
 from .scheduler import setup_scheduler
 from .admin import router as admin_router
 from .middlewares import DbMiddleware
-from .parsers.schedule import extract_groups_from_schedule
+from .init_groups import init_groups
 import asyncio
 
 async def handle_index(request):
@@ -51,13 +51,8 @@ async def main():
     pool = await asyncpg.create_pool(DATABASE_URL)
     await create_tables(pool)
     
-    # Получаем и обновляем список групп
-    groups = extract_groups_from_schedule()
-    if groups:
-        await update_groups_list(pool, groups)
-        print(f"Обновлен список групп: {len(groups)} групп")
-    else:
-        print("Не удалось получить список групп")
+    # Инициализируем список групп
+    await init_groups(pool)
     
     # Подключаем middleware для работы с базой данных
     dp.message.middleware(DbMiddleware(pool))

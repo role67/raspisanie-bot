@@ -16,31 +16,137 @@ class ProfileStates(StatesGroup):
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, pool=None):
-    await message.answer("👋 Привет! Я бот расписания колледжа. Выберите свою группу:", reply_markup=await group_keyboard(pool))
-    await state.set_state(ProfileStates.choosing_group)
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📚 Выбрать группу", callback_data="show_groups")
+    await message.answer(
+        "👋 Привет! Я бот расписания колледжа. Нажмите кнопку ниже, чтобы выбрать свою группу:",
+        reply_markup=builder.as_markup()
+    )
 
-async def group_keyboard(pool):
+GROUPS_PER_PAGE = 15
+
+@router.callback_query(F.data.startswith("page_"))
+@router.callback_query(F.data == "show_groups")
+async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, pool=None):
+    current_page = 0
+    if callback.data.startswith("page_"):
+        current_page = int(callback.data.split("_")[1])
+
     # Получаем список групп из базы
     async with pool.acquire() as conn:
         groups = await conn.fetch("SELECT name FROM groups ORDER BY name")
     
+    total_groups = len(groups)
+    total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
+    
+    # Получаем группы для текущей страницы
+    start_idx = current_page * GROUPS_PER_PAGE
+    end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
+    current_groups = groups[start_idx:end_idx]
+    
     builder = InlineKeyboardBuilder()
-    # Создаем кнопки с группами, максимум 2 в ряд
-    for i in range(0, len(groups), 2):
+    
+    # Добавляем кнопки групп, по 2 в ряд
+    for i in range(0, len(current_groups), 2):
         row_buttons = []
-        for group in groups[i:i+2]:
+        for group in current_groups[i:i+2]:
             row_buttons.append(InlineKeyboardButton(
                 text=group['name'],
                 callback_data=f"group_{group['name']}"
             ))
         builder.row(*row_buttons)
     
-    return builder.as_markup()
+    # Добавляем навигационные кнопки
+    nav_buttons = []
+    if current_page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️",
+            callback_data=f"page_{current_page-1}"
+        ))
+    if current_page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="▶️",
+            callback_data=f"page_{current_page+1}"
+        ))
+    if nav_buttons:
+        builder.row(*nav_buttons)
+    
+    page_info = f"Страница {current_page + 1} из {total_pages}"
+    
+    await callback.message.edit_text(
+        f"Выберите вашу группу из списка:\n{page_info}",
+        reply_markup=builder.as_markup()
+    )
+
+from .parsers.schedule import fetch_schedule, fetch_replacements
+
+async def get_schedule_text(group: str) -> str:
+    """Формирует текст расписания для группы"""
+    schedule_data = fetch_schedule()
+    replacements_data = fetch_replacements()
+    
+    if group not in schedule_data:
+        return "❌ Расписание для группы не найдено"
+    
+    text = f"📅 Расписание для группы {group}:\n\n"
+    
+    # Добавляем основное расписание
+    for lesson in schedule_data[group]:
+        text += f"🕐 {lesson['time']}\n"
+        text += f"📚 {lesson['subject']}\n\n"
+    
+    # Добавляем замены, если есть
+    if group in replacements_data:
+        text += "\n🔄 Замены:\n"
+        for date, replacements in replacements_data[group].items():
+            text += f"\n📅 {date}:\n"
+            for rep in replacements:
+                text += f"🕐 Пара {rep['lesson']}\n"
+                text += f"📚 {rep['subject']}\n"
+                text += f"🏫 Кабинет: {rep['room']}\n\n"
+    
+    return text
 
 @router.callback_query(F.data.startswith("group_"))
 async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot, pool=None):
     group = callback.data.replace("group_", "")
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO users (user_id, group_name) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET group_name = $2", callback.from_user.id, group)
-    await callback.message.edit_text(f"✅ Ваша группа: <b>{group}</b>\nТеперь вы можете узнать расписание и другую информацию!", parse_mode="HTML")
+        await conn.execute(
+            "INSERT INTO users (user_id, group_name) VALUES ($1, $2) "
+            "ON CONFLICT (user_id) DO UPDATE SET group_name = $2",
+            callback.from_user.id, group
+        )
+    
+    # Создаем клавиатуру для просмотра расписания
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📋 Показать расписание", callback_data=f"schedule_{group}")
+    builder.button(text="📚 Выбрать другую группу", callback_data="show_groups")
+    
+    await callback.message.edit_text(
+        f"✅ Ваша группа: <b>{group}</b>\n"
+        f"Нажмите кнопку ниже, чтобы посмотреть расписание:",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
     await state.clear()
+
+@router.callback_query(F.data.startswith("schedule_"))
+async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=None):
+    group = callback.data.replace("schedule_", "")
+    
+    # Показываем статус загрузки
+    await callback.answer("⏳ Загружаю расписание...")
+    
+    # Получаем расписание
+    schedule_text = await get_schedule_text(group)
+    
+    # Создаем клавиатуру для возврата
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 Обновить расписание", callback_data=f"schedule_{group}")
+    builder.button(text="📚 Выбрать другую группу", callback_data="show_groups")
+    
+    await callback.message.edit_text(
+        schedule_text,
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
