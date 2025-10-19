@@ -33,9 +33,14 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, poo
         current_page = int(callback.data.split("_")[1])
 
     # Получаем список групп из базы
-    async with pool.acquire() as conn:
-        groups = await conn.fetch("SELECT name FROM groups ORDER BY name")
-    
+    try:
+        async with pool.acquire() as conn:
+            groups = await conn.fetch("SELECT name FROM groups ORDER BY name")
+    except Exception as e:
+        print(f"Database error: {e}")
+        await callback.answer("Ошибка при получении списка групп", show_alert=True)
+        return
+            
     total_groups = len(groups)
     total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
     
@@ -110,12 +115,17 @@ async def get_schedule_text(group: str) -> str:
 @router.callback_query(F.data.startswith("group_"))
 async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot, pool=None):
     group = callback.data.replace("group_", "")
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO users (user_id, group_name) VALUES ($1, $2) "
-            "ON CONFLICT (user_id) DO UPDATE SET group_name = $2",
-            callback.from_user.id, group
-        )
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO users (user_id, group_name) VALUES ($1, $2) "
+                "ON CONFLICT (user_id) DO UPDATE SET group_name = $2",
+                callback.from_user.id, group
+            )
+    except Exception as e:
+        print(f"Database error: {e}")
+        await callback.answer("Ошибка при сохранении группы", show_alert=True)
+        return
     
     # Создаем клавиатуру для просмотра расписания
     builder = InlineKeyboardBuilder()
