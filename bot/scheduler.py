@@ -47,9 +47,10 @@ def setup_scheduler(app):
     pool = app['db_pool']
     
     scheduler.add_job(
-        lambda: asyncio.create_task(update_data(pool)), 
-        'interval', 
+        update_data,
+        'interval',
         minutes=20,
+        args=[pool],
         id='update_schedule_job',
         replace_existing=True
     )
