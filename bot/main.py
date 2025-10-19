@@ -24,7 +24,7 @@ async def main():
     dp = Dispatcher()
     pool = await asyncpg.create_pool(DATABASE_URL)
     await create_tables(pool)
-    bot['db'] = pool
+    dp['db'] = pool  # Store pool in dispatcher instead of bot
     dp.include_router(main_router)
     dp.include_router(features_router)
     dp.include_router(admin_router)
