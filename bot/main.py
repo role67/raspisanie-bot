@@ -2,7 +2,7 @@ import os
 import sys
 import socket
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 import asyncpg
 from aiohttp import web
@@ -35,8 +35,26 @@ from .middlewares import DbMiddleware
 from .init_groups import init_groups
 import asyncio
 
-async def handle_index(request):
-    return web.Response(text="Bot is running!")
+async def handle_webhook(request):
+    try:
+        data = await request.json()
+        update = types.Update(**data)
+        await request.app['dp'].feed_update(bot=request.app['bot'], update=update)
+        return web.Response(text='ok')
+    except Exception as e:
+        logging.error(f"Error handling webhook: {e}")
+        return web.Response(status=500)
+
+async def on_startup(app):
+    # Настраиваем вебхук
+    webhook_url = os.getenv("WEBHOOK_URL", "https://raspisanie-bot-ozca.onrender.com")
+    await app['bot'].set_webhook(f"{webhook_url}/webhook")
+    logging.info(f"Webhook set to {webhook_url}/webhook")
+
+async def on_shutdown(app):
+    # Удаляем вебхук при выключении
+    await app['bot'].delete_webhook()
+    await app['bot'].session.close()
 
 async def main():
     # Настраиваем логирование
@@ -44,7 +62,6 @@ async def main():
     
     # Инициализируем бота
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-    await bot.delete_webhook(drop_pending_updates=True)
     
     # Инициализируем диспетчер
     dp = Dispatcher()
@@ -64,26 +81,23 @@ async def main():
     
     # Настраиваем веб-сервер
     app = web.Application()
-    app.router.add_get("/", handle_index)
+    app['bot'] = bot
+    app['dp'] = dp
     
-    # Запускаем бота и веб-сервер
-    print('Бот запущен')
+    # Добавляем маршруты
+    app.router.add_post("/webhook", handle_webhook)
+    app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
+    
+    # Добавляем обработчики запуска/остановки
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
     
     # Получаем порт из переменной окружения (Render использует PORT)
     port = int(os.getenv("PORT", 8080))
     
-    # Запускаем веб-сервер и бота параллельно
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=port)
-    
-    await asyncio.gather(
-        site.start(),
-        dp.start_polling(bot)
-    )
+    print('Бот запущен')
+    return app
 
 if __name__ == "__main__":
-    if is_bot_running():
-        print("Бот уже запущен!")
-        sys.exit(1)
-    asyncio.run(main())
+    app = asyncio.run(main())
+    web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
