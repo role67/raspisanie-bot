@@ -16,8 +16,14 @@ class DbMiddleware(BaseMiddleware):
         if not self.pool:
             print("Warning: Database pool is not initialized")
             return await handler(event, data)
-            
+        
+        # Сохраняем пул в данных события и в данных бота
         data["pool"] = self.pool
+        if isinstance(event, Message):
+            event.bot.db_pool = self.pool
+        elif isinstance(event, CallbackQuery):
+            event.bot.db_pool = self.pool
+            
         try:
             return await handler(event, data)
         except Exception as e:
