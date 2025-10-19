@@ -75,7 +75,8 @@ async def create_tables(pool: asyncpg.Pool):
 async def main():
     logging.basicConfig(level=logging.INFO)
     
-    bot = Bot(BOT_TOKEN, parse_mode="HTML")
+    from aiogram.client.bot import DefaultBotProperties
+    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
 
     # Регистрируем роутеры
