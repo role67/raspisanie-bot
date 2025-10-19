@@ -96,7 +96,7 @@ async def main():
 
     # Настраиваем apscheduler
     scheduler = AsyncIOScheduler()
-    setup_scheduler(scheduler, bot, app['db_pool'])
+    setup_scheduler()
     
     # Configure webhook
     webhook_requests_handler = SimpleRequestHandler(
