@@ -1,143 +1,132 @@
 import os
-from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types
-from aiogram.client.default import DefaultBotProperties
-import asyncpg
-from aiohttp import web
+import asyncio
 import logging
+from aiogram import Bot, Dispatcher
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
+import asyncpg
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from dotenv import load_dotenv
+
+from bot.handlers import router as main_router
+from bot.features import router as features_router
+from bot.admin import router as admin_router
+from bot.middlewares import DbMiddleware
+from bot.init_groups import add_groups_to_db
+from bot.scheduler import setup_scheduler
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMINS = [int(x) for x in os.getenv("ADMINS", "").split(",") if x]
 DATABASE_URL = os.getenv("DATABASE_URL")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+ADMINS = [int(admin_id) for admin_id in os.getenv("ADMINS", "").split(",")]
+PORT = int(os.getenv("PORT", 8080))
 
-
-
-from .db import create_tables
-from .handlers import router as main_router
-from .features import router as features_router
-from .scheduler import setup_scheduler
-from .admin import router as admin_router
-from .middlewares import DbMiddleware
-from .init_groups import init_groups
-import asyncio
-
-WEBHOOK_PATH = "/webhook"
-WEBAPP_HOST = "0.0.0.0"
-
-async def on_startup(app: web.Application, webhook_url=None):
-    bot = app['bot']
-    if webhook_url is None:
-        webhook_url = os.getenv("WEBHOOK_URL", "https://raspisanie-bot-ozca.onrender.com")
-    
-    webhook_secret = os.getenv("WEBHOOK_SECRET")
-    await bot.set_webhook(
-        url=f"{webhook_url}{WEBHOOK_PATH}",
-        secret_token=webhook_secret
+async def create_pool():
+    """Создает пул соединений с базой данных."""
+    return await asyncpg.create_pool(
+        dsn=DATABASE_URL,
+        min_size=5,  # Увеличиваем минимальный размер пула
+        max_size=20, # Увеличиваем максимальный размер пула
+        command_timeout=30,
+        statement_timeout=30,
+        max_queries=50000
     )
-    logging.info(f"Webhook установлен на {webhook_url}{WEBHOOK_PATH}")
+
+async def on_startup(bot: Bot, dp: Dispatcher, app: web.Application):
+    """Действия при запуске бота."""
+    await bot.set_webhook(f"{WEBHOOK_URL}/webhook", secret_token=WEBHOOK_SECRET)
+    logging.info(f"Webhook установлен на {WEBHOOK_URL}/webhook")
+
+    # Добавляем middleware
+    pool = app['db_pool']
+    dp.message.middleware(DbMiddleware(pool))
+    dp.callback_query.middleware(DbMiddleware(pool))
 
 async def on_shutdown(app: web.Application):
-    bot = app['bot']
-    # Close database pool first
-    if 'db_pool' in app:
-        try:
-            pool = app['db_pool']
-            await pool.expire_connections()
-            await pool.close()
-        except Exception as e:
-            logging.error(f"Error closing database pool: {e}")
+    """Действия при остановке бота."""
+    logging.warning("Shutting down..")
     
-    # Then close bot session and webhook
-    try:
-        await bot.delete_webhook()
-        await bot.session.close()
-    except Exception as e:
-        logging.error(f"Error closing bot session: {e}")
+    # Закрываем пул соединений
+    if 'db_pool' in app:
+        logging.info("Closing database pool...")
+        await app['db_pool'].close()
+        logging.info("Database pool closed.")
+    
+    logging.warning("Bye!")
+
+async def create_tables(pool: asyncpg.Pool):
+    """Создает таблицы в базе данных, если их нет."""
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                group_name VARCHAR(255)
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS groups (
+                name VARCHAR(255) PRIMARY KEY
+            );
+        """)
 
 async def main():
-    # Настраиваем логирование
     logging.basicConfig(level=logging.INFO)
     
-    # Инициализируем бота и диспетчер
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+    bot = Bot(BOT_TOKEN, parse_mode="HTML")
     dp = Dispatcher()
 
-    # Инициализируем базу данных с максимальным количеством соединений
-    try:
-        pool = await asyncpg.create_pool(
-            DATABASE_URL,
-            min_size=2,
-            max_size=10,
-            command_timeout=30,  # Reduced timeout
-            max_queries=50000,
-            max_inactive_connection_lifetime=180.0,  # Reduced lifetime
-            server_settings={
-                'application_name': 'raspisanie_bot',
-                'statement_timeout': '30000',  # 30 seconds
-                'idle_in_transaction_session_timeout': '30000'  # 30 seconds
-            }
-        )
-        # Сохраняем пул в объекте бота и приложении
-        bot.db_pool = pool
-        
-        # Проверяем соединение
-        async with pool.acquire() as conn:
-            await conn.execute('SELECT 1')
-            
-        await create_tables(pool)
-        await init_groups(pool)
-        
-        # Подключаем middleware и роутеры
-        dp.message.middleware(DbMiddleware(pool))
-        dp.callback_query.middleware(DbMiddleware(pool))
-    except Exception as e:
-        logging.error(f"Database initialization error: {e}")
-        raise
+    # Регистрируем роутеры
     dp.include_router(main_router)
     dp.include_router(features_router)
     dp.include_router(admin_router)
-    setup_scheduler()
-    
-    # Настраиваем вебхук
+
     app = web.Application()
-    app['bot'] = bot
-    app['db_pool'] = pool
+    app['db_pool'] = await create_pool()
+    app['bot'] = bot  # Store bot instance in app
+
+    # Создаем таблицы
+    await create_tables(app['db_pool'])
     
-    # Получаем и проверяем webhook_secret
-    webhook_secret = os.getenv("WEBHOOK_SECRET")
-    if not webhook_secret:
-        logging.warning("WEBHOOK_SECRET не установлен!")
-        webhook_secret = None
+    # Добавляем группы в базу данных
+    groups_added = await add_groups_to_db(app['db_pool'])
+    logging.info(f"Добавлено {groups_added} групп в базу данных")
+
+    # Настраиваем apscheduler
+    scheduler = AsyncIOScheduler()
+    setup_scheduler(scheduler, bot, app['db_pool'])
     
-    # Настраиваем обработчик вебхука
-    SimpleRequestHandler(
+    # Configure webhook
+    webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
-        secret_token=webhook_secret
-    ).register(app, path=WEBHOOK_PATH)
-    
-    # Добавляем маршрут для проверки работоспособности
-    app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
-    
-    # Добавляем обработчики запуска/остановки
-    app.on_startup.append(on_startup)
+    )
+    webhook_requests_handler.register(app, path="/webhook")
+
+    # Startup and shutdown hooks
+    app.on_startup.append(lambda app: on_startup(bot, dp, app))
     app.on_shutdown.append(on_shutdown)
-    
-    print('Бот запущен')
-    return app
+
+    # Store bot and dispatcher instances in app
+    app['bot'] = bot
+    app['dp'] = dp
+
+    # Setup AIOHTTP app
+    setup_application(app, dp, bot=bot)
+
+    # Run application
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+    logging.info("Бот запущен")
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
 
 if __name__ == "__main__":
-    # Запускаем приложение
-    app = asyncio.run(main())
-    
-    # Запускаем веб-сервер
-    port = int(os.getenv("PORT", 8080))
-    web.run_app(
-        app,
-        host="0.0.0.0",
-        port=port,
-        access_log=logging.getLogger("aiohttp.access")
-    )
+    asyncio.run(main())
