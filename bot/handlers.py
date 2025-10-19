@@ -15,13 +15,12 @@ class ProfileStates(StatesGroup):
     choosing_group = State()
 
 @router.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext, bot: Bot):
-    await message.answer("👋 Привет! Я бот расписания колледжа. Выберите свою группу:", reply_markup=await group_keyboard(bot))
+async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, pool=None):
+    await message.answer("👋 Привет! Я бот расписания колледжа. Выберите свою группу:", reply_markup=await group_keyboard(pool))
     await state.set_state(ProfileStates.choosing_group)
 
-async def group_keyboard(bot: Bot):
-    # Здесь должен быть запрос к базе для получения списка групп
-    pool: asyncpg.Pool = bot.dispatcher['db']
+async def group_keyboard(pool):
+    # Получаем группы из базы данных
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT DISTINCT group_name FROM schedule ORDER BY group_name")
     builder = InlineKeyboardBuilder()
@@ -30,9 +29,8 @@ async def group_keyboard(bot: Bot):
     return builder.as_markup()
 
 @router.callback_query(F.data.startswith("group_"))
-async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot, pool=None):
     group = callback.data.replace("group_", "")
-    pool: asyncpg.Pool = callback.bot.dispatcher['db']
     async with pool.acquire() as conn:
         await conn.execute("INSERT INTO users (user_id, group_name) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET group_name = $2", callback.from_user.id, group)
     await callback.message.edit_text(f"✅ Ваша группа: <b>{group}</b>\nТеперь вы можете узнать расписание и другую информацию!", parse_mode="HTML")
