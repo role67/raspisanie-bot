@@ -28,25 +28,29 @@ GROUPS_PER_PAGE = 15
 
 @router.callback_query(F.data.startswith("page_"))
 @router.callback_query(F.data == "show_groups")
-async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, pool=None):
-    await callback.answer() # Answer callback immediately
-
-    current_page = 0
-    if callback.data.startswith("page_"):
-        current_page = int(callback.data.split("_")[1])
-
-    # Получаем список групп из базы
+async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, db=None):
     try:
-        pool = callback.bot.dispatcher['db'] if hasattr(callback.bot, 'dispatcher') and 'db' in callback.bot.dispatcher else pool
-        if not pool:
-            await callback.answer("Ошибка подключения к базе данных", show_alert=True)
+        # Отвечаем на callback немедленно
+        await callback.answer()
+        
+        current_page = 0
+        if callback.data.startswith("page_"):
+            current_page = int(callback.data.split("_")[1])
+
+        # Получаем список групп из базы
+        if not db:
+            await callback.message.edit_text("Ошибка подключения к базе данных")
             return
             
-        async with pool.acquire() as conn:
-            groups = await conn.fetch("SELECT name FROM groups ORDER BY name")
+        groups = await db.fetch("SELECT name FROM groups ORDER BY name")
     except Exception as e:
-        logging.error(f"Database error in show_groups_list: {e}")
-        await callback.answer("Ошибка при получении списка групп", show_alert=True)
+        logging.error(f"Error in show_groups_list: {e}")
+        try:
+            await callback.message.edit_text(
+                "Произошла ошибка при получении списка групп. Попробуйте позже."
+            )
+        except:
+            pass
         return
             
     total_groups = len(groups)
@@ -121,24 +125,34 @@ async def get_schedule_text(group: str) -> str:
     return text
 
 @router.callback_query(F.data.startswith("group_"))
-async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot, pool=None):
-    group = callback.data.replace("group_", "")
-    await callback.answer() # Answer callback immediately
+async def choose_group(callback: types.CallbackQuery, state: FSMContext, db=None):
     try:
-        pool = callback.bot.dispatcher['db'] if hasattr(callback.bot, 'dispatcher') and 'db' in callback.bot.dispatcher else pool
-        if not pool:
-            await callback.answer("Ошибка подключения к базе данных", show_alert=True)
+        # Отвечаем на callback немедленно
+        await callback.answer()
+        
+        group = callback.data.replace("group_", "")
+        
+        if not db:
+            await callback.message.edit_text("Ошибка подключения к базе данных")
             return
             
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO users (user_id, group_name) VALUES ($1, $2) "
-                "ON CONFLICT (user_id) DO UPDATE SET group_name = $2",
-                callback.from_user.id, group
-            )
+        # Сохраняем выбор группы
+        await db.execute(
+            """
+            INSERT INTO users (user_id, group_name) 
+            VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET group_name = $2
+            """,
+            callback.from_user.id, group
+        )
     except Exception as e:
-        logging.error(f"Database error in choose_group: {e}")
-        await callback.answer("Ошибка при сохранении группы", show_alert=True)
+        logging.error(f"Error in choose_group: {e}")
+        try:
+            await callback.message.edit_text(
+                "Произошла ошибка при сохранении группы. Попробуйте позже."
+            )
+        except:
+            pass
         return
     
     # Создаем клавиатуру для просмотра расписания

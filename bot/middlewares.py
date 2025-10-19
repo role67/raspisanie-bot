@@ -2,7 +2,7 @@ import logging
 from typing import Callable, Awaitable, Any
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
-from asyncpg import Pool
+from asyncpg.pool import Pool
 
 class DbMiddleware(BaseMiddleware):
     def __init__(self, pool: Pool):
@@ -14,15 +14,19 @@ class DbMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any]
     ) -> Any:
-        try:
-            async with self.pool.acquire() as conn:
-                data['db'] = conn
-                result = await handler(event, data)
-                return result
-        except Exception as e:
-            logging.exception("Error in middleware")
-            await event.answer("Произошла ошибка при обработке запроса", show_alert=True)
-        finally:
-            # Ensure the connection is released back to the pool
-            if 'db' in data:
-                del data['db']
+        async with self.pool.acquire() as conn:
+            data['db'] = conn
+            try:
+                return await handler(event, data)
+            except Exception as e:
+                logging.error(f"Error in handler: {e}")
+                try:
+                    if hasattr(event, 'message'):
+                        await event.message.answer(
+                            "Произошла ошибка при обработке запроса. Попробуйте позже."
+                        )
+                except:
+                    logging.error("Could not send error message to user")
+            finally:
+                if 'db' in data:
+                    del data['db']
