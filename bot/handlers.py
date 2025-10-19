@@ -32,9 +32,17 @@ class ProfileStates(StatesGroup):
 async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, pool=None):
     is_admin = message.from_user.id in ADMINS
     menu = get_main_menu(is_admin)
+    # Создаем инлайн клавиатуру для выбора группы
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📚 Выбрать группу", callback_data="show_groups")
+    
     await message.answer(
         "👋 Привет! Я бот расписания колледжа. Выберите действие через меню ниже:",
         reply_markup=menu
+    )
+    await message.answer(
+        "Нажмите кнопку ниже, чтобы выбрать вашу группу:",
+        reply_markup=builder.as_markup()
     )
 
 # Обработчики нажатий на кнопки главного меню
@@ -100,13 +108,23 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, db=
     
     builder = InlineKeyboardBuilder()
     
-    # Добавляем кнопки групп, по 2 в ряд
-    for i in range(0, len(current_groups), 2):
+    # Добавляем кнопки групп, разделенные на две колонки
+    mid_point = (len(current_groups) + 1) // 2
+    left_column = current_groups[:mid_point]
+    right_column = current_groups[mid_point:]
+    
+    # Добавляем кнопки попарно из левой и правой колонки
+    for i in range(max(len(left_column), len(right_column))):
         row_buttons = []
-        for group in current_groups[i:i+2]:
+        if i < len(left_column):
             row_buttons.append(InlineKeyboardButton(
-                text=group['name'],
-                callback_data=f"group_{group['name']}"
+                text=left_column[i]['name'],
+                callback_data=f"group_{left_column[i]['name']}"
+            ))
+        if i < len(right_column):
+            row_buttons.append(InlineKeyboardButton(
+                text=right_column[i]['name'],
+                callback_data=f"group_{right_column[i]['name']}"
             ))
         builder.row(*row_buttons)
     
