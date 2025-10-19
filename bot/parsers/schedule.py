@@ -21,19 +21,33 @@ def fetch_schedule():
             return {}
         print("df.head():", df.head())
         print("df.columns:", df.columns)
+        # Заполняем пропуски времени (интервала)
+        if 'Интервал' in df.columns:
+            df['Интервал'] = df['Интервал'].fillna(method='ffill')
         schedule_data = {}
-        for col in df.columns[1:]:
-            if str(col).strip() and str(col).strip() != 'nan':
-                group_name = str(col).strip()
-                schedule_data[group_name] = []
-                for idx, row in df.iterrows():
-                    time = str(row.iloc[0]).strip()
-                    subject = str(row[col]).strip()
-                    if subject and subject != 'nan':
-                        schedule_data[group_name].append({
-                            'time': time,
-                            'subject': subject
-                        })
+        # Группы идут через один столбец: [Группа, Unnamed, Группа, Unnamed, ...]
+        group_cols = [col for col in df.columns if '-' in str(col)]
+        for group_col in group_cols:
+            schedule_data[group_col] = []
+            # Индекс преподавателя и кабинета
+            subj_idx = df.columns.get_loc(group_col)
+            teacher_idx = subj_idx + 1
+            room_idx = subj_idx + 2
+            for idx, row in df.iterrows():
+                lesson_number = idx + 1
+                time = row.get('Интервал', '')
+                subject = row.get(group_col, '')
+                teacher = row.get(df.columns[teacher_idx], '') if teacher_idx < len(df.columns) else ''
+                room = row.get(df.columns[room_idx], '') if room_idx < len(df.columns) else ''
+                # Пропускаем пустые строки
+                if pd.notna(subject) and str(subject).strip() and str(subject).strip().lower() != 'nan':
+                    schedule_data[group_col].append({
+                        'lesson_number': lesson_number,
+                        'time': str(time).strip(),
+                        'subject': str(subject).strip(),
+                        'teacher': str(teacher).strip(),
+                        'room': str(room).strip()
+                    })
         print("schedule_data.keys():", list(schedule_data.keys()))
         return schedule_data
     except Exception as e:
@@ -88,17 +102,3 @@ def extract_groups_from_schedule():
         for group in groups:
             group = str(group).strip()
             if group and group not in ['Время', 'Дата', 'День', '']:
-                cleaned_groups.append(group)
-        return sorted(list(set(cleaned_groups)))  # Убираем дубликаты и сортируем
-    except Exception as e:
-        print(f"Ошибка при извлечении групп: {e}")
-        return []
-
-# Для теста:
-if __name__ == "__main__":
-    schedule = fetch_schedule()
-    print(schedule.head())
-    replacements = fetch_replacements()
-    print(replacements)
-    groups = extract_groups_from_schedule()
-    print("Найденные группы:", groups)
