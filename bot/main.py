@@ -66,6 +66,8 @@ async def main():
             max_queries=50000,
             max_inactive_connection_lifetime=300.0
         )
+        # Сохраняем пул в объекте бота
+        bot.db_pool = pool
         
         # Проверяем соединение
         async with pool.acquire() as conn:
