@@ -1,3 +1,4 @@
+import logging
 from aiogram import Router, F, types
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -34,10 +35,15 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, poo
 
     # Получаем список групп из базы
     try:
+        pool = callback.bot.get('db_pool', pool)
+        if not pool:
+            await callback.answer("Ошибка подключения к базе данных", show_alert=True)
+            return
+            
         async with pool.acquire() as conn:
             groups = await conn.fetch("SELECT name FROM groups ORDER BY name")
     except Exception as e:
-        print(f"Database error: {e}")
+        logging.error(f"Database error in show_groups_list: {e}")
         await callback.answer("Ошибка при получении списка групп", show_alert=True)
         return
             
