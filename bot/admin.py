@@ -19,7 +19,7 @@ def admin_only(func):
 @router.message(Command("stats"))
 @admin_only
 async def stats(message: types.Message, bot):
-    pool: asyncpg.Pool = bot['db']
+    pool: asyncpg.Pool = message.bot.dispatcher['db']
     async with pool.acquire() as conn:
         total = await conn.fetchval("SELECT COUNT(*) FROM users")
         today = await conn.fetchval("SELECT COUNT(*) FROM users WHERE joined_at::date = CURRENT_DATE")
@@ -30,7 +30,7 @@ async def stats(message: types.Message, bot):
 @router.message(Command("groups"))
 @admin_only
 async def group_stats(message: types.Message, bot):
-    pool: asyncpg.Pool = bot['db']
+    pool: asyncpg.Pool = message.bot.dispatcher['db']
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT group_name, COUNT(*) as cnt FROM users WHERE group_name IS NOT NULL GROUP BY group_name ORDER BY cnt DESC")
     text = "<b>👥 Пользователи по группам:</b>\n"
