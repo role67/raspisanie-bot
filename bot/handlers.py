@@ -20,12 +20,21 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, pool=No
     await state.set_state(ProfileStates.choosing_group)
 
 async def group_keyboard(pool):
-    # Получаем группы из базы данных
+    # Получаем список групп из базы
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT DISTINCT group_name FROM schedule ORDER BY group_name")
+        groups = await conn.fetch("SELECT name FROM groups ORDER BY name")
+    
     builder = InlineKeyboardBuilder()
-    for row in rows:
-        builder.button(text=row['group_name'], callback_data=f"group_{row['group_name']}")
+    # Создаем кнопки с группами, максимум 2 в ряд
+    for i in range(0, len(groups), 2):
+        row_buttons = []
+        for group in groups[i:i+2]:
+            row_buttons.append(InlineKeyboardButton(
+                text=group['name'],
+                callback_data=f"group_{group['name']}"
+            ))
+        builder.row(*row_buttons)
+    
     return builder.as_markup()
 
 @router.callback_query(F.data.startswith("group_"))
