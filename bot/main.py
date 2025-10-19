@@ -27,9 +27,10 @@ import asyncio
 WEBHOOK_PATH = "/webhook"
 WEBAPP_HOST = "0.0.0.0"
 
-async def on_startup(app: web.Application):
+async def on_startup(app: web.Application, webhook_url=None):
     bot = app['bot']
-    webhook_url = os.getenv("WEBHOOK_URL", "https://raspisanie-bot-ozca.onrender.com")
+    if webhook_url is None:
+        webhook_url = os.getenv("WEBHOOK_URL", "https://raspisanie-bot-ozca.onrender.com")
     await bot.set_webhook(f"{webhook_url}{WEBHOOK_PATH}")
     logging.info(f"Webhook установлен на {webhook_url}{WEBHOOK_PATH}")
 
