@@ -1,35 +1,28 @@
-from typing import Any, Awaitable, Callable, Dict
+import logging
+from typing import Callable, Awaitable, Any
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import TelegramObject
+from asyncpg import Pool
 
 class DbMiddleware(BaseMiddleware):
-    def __init__(self, pool):
-        super().__init__()
+    def __init__(self, pool: Pool):
         self.pool = pool
 
     async def __call__(
         self,
-        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
-        event: Message | CallbackQuery,
-        data: Dict[str, Any]
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any]
     ) -> Any:
-        if not self.pool:
-            print("Warning: Database pool is not initialized")
-            return await handler(event, data)
-        
-        # Сохраняем пул в данных события и в данных бота
-        data["pool"] = self.pool
-        if isinstance(event, Message):
-            event.bot.db_pool = self.pool
-        elif isinstance(event, CallbackQuery):
-            event.bot.db_pool = self.pool
-            
         try:
-            return await handler(event, data)
+            async with self.pool.acquire() as conn:
+                data['db'] = conn
+                result = await handler(event, data)
+                return result
         except Exception as e:
-            print(f"Error in middleware: {e}")
-            if isinstance(event, CallbackQuery):
-                await event.answer("Произошла ошибка при обработке запроса", show_alert=True)
-            elif isinstance(event, Message):
-                await event.answer("Произошла ошибка при обработке сообщения")
-            return None
+            logging.exception("Error in middleware")
+            await event.answer("Произошла ошибка при обработке запроса", show_alert=True)
+        finally:
+            # Ensure the connection is released back to the pool
+            if 'db' in data:
+                del data['db']
