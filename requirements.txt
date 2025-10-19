@@ -1,0 +1,7 @@
+aiogram[fast]
+asyncpg
+apscheduler
+pandas
+python-dotenv
+openpyxl
+python-docx
