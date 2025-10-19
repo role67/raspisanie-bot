@@ -24,14 +24,19 @@ from .middlewares import DbMiddleware
 from .init_groups import init_groups
 import asyncio
 
-async def on_startup(bot: Bot, webhook_url: str):
-    # Установка вебхука при запуске
-    await bot.set_webhook(webhook_url)
-    logging.info(f"Webhook установлен на {webhook_url}")
+WEBHOOK_PATH = "/webhook"
+WEBAPP_HOST = "0.0.0.0"
 
-async def on_shutdown(bot: Bot):
-    # Удаление вебхука при остановке
+async def on_startup(app: web.Application):
+    bot = app['bot']
+    webhook_url = os.getenv("WEBHOOK_URL", "https://raspisanie-bot-ozca.onrender.com")
+    await bot.set_webhook(f"{webhook_url}{WEBHOOK_PATH}")
+    logging.info(f"Webhook установлен на {webhook_url}{WEBHOOK_PATH}")
+
+async def on_shutdown(app: web.Application):
+    bot = app['bot']
     await bot.delete_webhook()
+    await bot.session.close()
 
 async def main():
     # Настраиваем логирование
@@ -56,8 +61,7 @@ async def main():
     
     # Настраиваем вебхук
     app = web.Application()
-    webhook_url = os.getenv("WEBHOOK_URL", "https://raspisanie-bot-ozca.onrender.com")
-    webhook_path = "/webhook"
+    app['bot'] = bot
     webhook_secret = os.getenv("WEBHOOK_SECRET", "")  # Добавляем секрет для безопасности
 
     # Настраиваем обработчик вебхука
@@ -65,17 +69,14 @@ async def main():
         dispatcher=dp,
         bot=bot,
         secret_token=webhook_secret
-    ).register(app, path=webhook_path)
+    ).register(app, path=WEBHOOK_PATH)
     
     # Добавляем маршрут для проверки работоспособности
     app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
     
-    # Настраиваем запуск и остановку
-    setup_application(app, dp, bot=bot)
-    
-    # Добавляем свои обработчики
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
+    # Добавляем обработчики запуска/остановки
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
     
     print('Бот запущен')
     return app
