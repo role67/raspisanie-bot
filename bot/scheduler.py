@@ -110,3 +110,4 @@ if __name__ == "__main__":
     print(replacements)
     groups = extract_groups_from_schedule()
     print("Найденные группы:", groups)
+
