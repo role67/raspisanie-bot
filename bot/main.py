@@ -31,7 +31,6 @@ async def create_pool():
         min_size=5,  # Увеличиваем минимальный размер пула
         max_size=20, # Увеличиваем максимальный размер пула
         command_timeout=30,
-        statement_timeout=30,
         max_queries=50000
     )
 
