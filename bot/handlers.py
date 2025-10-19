@@ -35,7 +35,7 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, poo
 
     # Получаем список групп из базы
     try:
-        pool = callback.bot.get('db_pool', pool)
+        pool = getattr(callback.bot, 'db_pool', pool)
         if not pool:
             await callback.answer("Ошибка подключения к базе данных", show_alert=True)
             return
@@ -122,6 +122,11 @@ async def get_schedule_text(group: str) -> str:
 async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot, pool=None):
     group = callback.data.replace("group_", "")
     try:
+        pool = getattr(callback.bot, 'db_pool', pool)
+        if not pool:
+            await callback.answer("Ошибка подключения к базе данных", show_alert=True)
+            return
+            
         async with pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO users (user_id, group_name) VALUES ($1, $2) "
@@ -129,7 +134,7 @@ async def choose_group(callback: types.CallbackQuery, state: FSMContext, bot: Bo
                 callback.from_user.id, group
             )
     except Exception as e:
-        print(f"Database error: {e}")
+        logging.error(f"Database error in choose_group: {e}")
         await callback.answer("Ошибка при сохранении группы", show_alert=True)
         return
     
