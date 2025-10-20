@@ -115,18 +115,40 @@ def format_schedule_for_group(group_lessons):
     Форматирует расписание для группы в красивый текст для Telegram.
     group_lessons: список занятий (dict с ключами lesson_number, time, subject, teacher, room)
     """
+    from .lesson_times import LESSON_TIMES
+    
     if not group_lessons:
         return "Расписание не найдено."
-    lines = []
+        
+    # Сгруппируем пары по номерам
+    lessons_by_number = {}
     for lesson in group_lessons:
-        num = lesson.get('lesson_number', '')
         time = lesson.get('time', '')
-        subject = lesson.get('subject', '')
-        teacher = lesson.get('teacher', '')
-        room = lesson.get('room', '')
-        line = f"{num}. {time}\n{subject}\n{teacher} | {room}"
-        lines.append(line)
-    return '\n\n'.join(lines)
+        if time not in lessons_by_number:
+            lessons_by_number[time] = []
+        lessons_by_number[time].append(lesson)
+    
+    lines = []
+    for time, lessons in sorted(lessons_by_number.items()):
+        lesson_num = time.split()[0]  # Получаем номер пары из "1 пара"
+        lines.append(f"{'_' * 7} Занятие №{lesson_num} {'_' * 7}")
+        lines.append(f"         ⏰«{LESSON_TIMES.get(time, 'Время не указано')}»\n")
+        
+        for lesson in lessons:
+            subject = lesson.get('subject', '').strip()
+            teacher = lesson.get('teacher', '').strip()
+            room = lesson.get('room', '').strip()
+            
+            if subject and subject != "-----":
+                lines.append(f"📚 Предмет: {subject}")
+                if teacher:
+                    lines.append(f"👤 Преподаватель: {teacher}")
+                if room:
+                    lines.append(f"🚪 Кабинет: {room}")
+                lines.append("")
+        lines.append("")
+    
+    return '\n'.join(lines)
 
 # Для теста:
 if __name__ == "__main__":

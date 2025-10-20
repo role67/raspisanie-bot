@@ -54,9 +54,17 @@ async def main_schedule(message: types.Message, bot):
 async def main_replacements(message: types.Message, bot):
     await message.answer("🔄 Для просмотра замен выберите свою группу через /start или используйте меню выбора группы.")
 
+from datetime import datetime
+from .parsers.lesson_times import get_current_lesson_info, get_schedule_string
+
 @router.message(F.text == "Время 🕒")
 async def main_time(message: types.Message, bot):
-    await message.answer("⏰ Для отображения времени до следующей пары используйте команду /time.")
+    weekday = datetime.now().weekday()
+    current_info = get_current_lesson_info()
+    schedule = get_schedule_string(weekday)
+    
+    text = f"{current_info}\n\n{schedule}"
+    await message.answer(text)
 
 @router.message(F.text == "Профиль 🧑")
 async def main_profile(message: types.Message, bot):
@@ -154,6 +162,7 @@ from .parsers.schedule import fetch_schedule, fetch_replacements
 
 async def get_schedule_text(group: str) -> str:
     """Формирует текст расписания для группы"""
+    from .parsers.lesson_times import LESSON_TIMES
     schedule_data = fetch_schedule()
     replacements_data = fetch_replacements()
     
@@ -162,20 +171,45 @@ async def get_schedule_text(group: str) -> str:
     
     text = f"📅 Расписание для группы {group}:\n\n"
     
-    # Добавляем основное расписание
+    # Сгруппируем пары по номерам
+    lessons_by_number = {}
     for lesson in schedule_data[group]:
-        text += f"🕐 {lesson['time']}\n"
-        text += f"📚 {lesson['subject']}\n\n"
+        time = lesson['time']
+        if time not in lessons_by_number:
+            lessons_by_number[time] = []
+        lessons_by_number[time].append(lesson)
+    
+    # Добавляем основное расписание
+    for time, lessons in lessons_by_number.items():
+        text += f"{'_' * 7} Занятие №{time[0]} {'_' * 7}\n"
+        text += f"         ⏰«{LESSON_TIMES.get(time, 'Время не указано')}»\n\n"
+        
+        for lesson in lessons:
+            subject = lesson.get('subject', '').strip()
+            teacher = lesson.get('teacher', '').strip()
+            room = lesson.get('room', '').strip()
+            
+            if subject and subject != "-----":
+                text += f"📚 Предмет: {subject}\n"
+                if teacher:
+                    text += f"👤 Преподаватель: {teacher}\n"
+                if room:
+                    text += f"🚪 Кабинет: {room}\n"
+                text += "\n"
+        text += "\n"
     
     # Добавляем замены, если есть
     if group in replacements_data:
-        text += "\n🔄 Замены:\n"
+        text += "\n🔄 ЗАМЕНЫ В РАСПИСАНИИ:\n"
         for date, replacements in replacements_data[group].items():
             text += f"\n📅 {date}:\n"
             for rep in replacements:
-                text += f"🕐 Пара {rep['lesson']}\n"
-                text += f"📚 {rep['subject']}\n"
-                text += f"🏫 Кабинет: {rep['room']}\n\n"
+                text += f"{'_' * 7} Занятие №{rep['lesson']} {'_' * 7}\n"
+                text += f"         ⏰«{LESSON_TIMES.get(f'{rep['lesson']} пара', 'Время не указано')}»\n\n"
+                text += f"📚 Предмет: {rep['subject']}\n"
+                if rep.get('teacher'):
+                    text += f"👤 Преподаватель: {rep['teacher']}\n"
+                text += f"🚪 Кабинет: {rep['room']}\n\n"
     
     return text
 
