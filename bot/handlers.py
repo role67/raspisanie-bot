@@ -218,7 +218,7 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, db=
 
 from .parsers.schedule import fetch_schedule, fetch_replacements, format_day_schedule
 
-async def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons: list = None, last_update=None) -> str:
+def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons: list = None, last_update=None) -> str:
     """Формирует текст расписания для группы (без замен), формат с эмодзи и правильным порядком"""
     from .parsers.lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
     from datetime import datetime
