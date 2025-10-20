@@ -234,9 +234,9 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
         times_dict = WEEKDAY_TIMES
     # Заголовок
     if date_str:
-        lines = [f"📅 {date_str} | {day}\n"]
+        lines = [f"📅 {date_str} | {day}"]
     else:
-        lines = [f"📅 {day}\n"]
+        lines = [f"📅 {day}"]
     lessons = lessons if lessons is not None else schedule_data[group].get(day, [])
     if not lessons:
         lines.append("\n❌ Расписание на этот день не найдено")
@@ -263,7 +263,7 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
             lines.append(f"🚪 {room_str}")
         lines.append("")
     if last_update:
-        lines.append(f"🕒Обновлено: {last_update.strftime('%d.%m.%Y %H:%M')}")
+        lines.append(f"🕒 Обновлено: {last_update.strftime('%d.%m.%Y %H:%M')}")
     return '\n'.join(lines)
 
 @router.callback_query(F.data.startswith("group_"))
