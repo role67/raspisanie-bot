@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS schedule_updates (
 async def create_tables(pool):
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Удаляем старые таблицы для чистой установки
+            await conn.execute("""
+                DROP TABLE IF EXISTS schedule CASCADE;
+                DROP TABLE IF EXISTS subjects CASCADE;
+                DROP TABLE IF EXISTS teachers CASCADE;
+                DROP TABLE IF EXISTS current_week CASCADE;
+            """)
+            
             # Создаем основные таблицы
             await conn.execute(GROUPS_TABLE)
             await conn.execute(USER_TABLE)
@@ -88,11 +96,12 @@ async def create_tables(pool):
             await conn.execute(SCHEDULE_UPDATES_TABLE)
             await conn.execute(CURRENT_WEEK_TABLE)
             
-            # Инициализируем текущую неделю, если еще не установлена
+            # Инициализируем текущую неделю (2-я неделя)
             await conn.execute("""
-                INSERT INTO current_week (week_number)
-                VALUES (2)
-                ON CONFLICT (id) DO NOTHING;
+                INSERT INTO current_week (id, week_number, changed_at)
+                VALUES (1, 2, NOW())
+                ON CONFLICT (id) DO UPDATE 
+                SET week_number = 2, changed_at = NOW();
             """)
             
             # Добавляем индексы для оптимизации
