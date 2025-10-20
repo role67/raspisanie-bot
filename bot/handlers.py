@@ -47,31 +47,23 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, pool=No
 
 # Обработчики нажатий на кнопки главного меню
 @router.message(F.text == "Расписание 📝")
+@router.message(Command("schedule"))
 async def main_schedule(message: types.Message, bot, db=None):
     if not db:
         await message.answer("Ошибка подключения к базе данных")
         return
-        
     user = await db.fetchrow("SELECT group_name FROM users WHERE user_id = $1", message.from_user.id)
     if not user or not user['group_name']:
         builder = InlineKeyboardBuilder()
         builder.button(text="📚 Выбрать группу", callback_data="show_groups")
-        await message.answer(
-            "Сначала выберите вашу группу:",
-            reply_markup=builder.as_markup()
-        )
+        await message.answer("Сначала выберите вашу группу:", reply_markup=builder.as_markup())
         return
-        
-    # Show schedule for user's group
     group = user['group_name']
-    text = await get_schedule_text(group)
-    
-    # Create keyboard for navigation
     builder = InlineKeyboardBuilder()
-    builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
-    builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
-    
-    await message.answer(text, reply_markup=builder.as_markup())
+    builder.button(text="Сегодня", callback_data=f"schedule_{group}_today")
+    builder.button(text="Завтра", callback_data=f"schedule_{group}_tomorrow")
+    builder.button(text="Неделя", callback_data=f"schedule_{group}_week")
+    await message.answer("Выберите период расписания:", reply_markup=builder.as_markup())
 
 @router.message(F.text == "Замены ✏️")
 async def main_replacements(message: types.Message, bot, db=None):
@@ -132,7 +124,9 @@ async def main_profile(message: types.Message, bot, db=None):
     if not user or not user['group_name']:
         await message.answer("Вы не выбрали группу. Выберите группу через меню.")
         return
-    await message.answer(f"👤 Ваш профиль:\nГруппа: <b>{user['group_name']}</b>", parse_mode="HTML")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Изменить группу", callback_data="show_groups")
+    await message.answer(f"👤 Ваш профиль:\nГруппа: <b>{user['group_name']}</b>", reply_markup=builder.as_markup(), parse_mode="HTML")
 
 @router.message(F.text == "Админ панель 🛠")
 async def main_admin_panel(message: types.Message, bot):
@@ -225,56 +219,33 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, db=
 from .parsers.schedule import fetch_schedule, fetch_replacements, format_day_schedule
 
 async def get_schedule_text(group: str) -> str:
-    """Формирует текст расписания для группы"""
+    """Формирует текст расписания для группы (без замен)"""
     from .parsers.lesson_times import LESSON_TIMES
     schedule_data = fetch_schedule()
-    replacements_data = fetch_replacements()
-    
     if group not in schedule_data:
         return "❌ Расписание для группы не найдено"
-    
     text = f"📅 Расписание для группы {group}:\n\n"
-    
-    # Сгруппируем пары по номерам
     lessons_by_number = {}
     for lesson in schedule_data[group]:
         time = lesson['time']
         if time not in lessons_by_number:
             lessons_by_number[time] = []
         lessons_by_number[time].append(lesson)
-    
-    # Добавляем основное расписание
     for time, lessons in lessons_by_number.items():
         text += f"{'_' * 7} Занятие №{time[0]} {'_' * 7}\n"
         text += f"         ⏰«{LESSON_TIMES.get(time, 'Время не указано')}»\n\n"
-        
         for lesson in lessons:
             subject = lesson.get('subject', '').strip()
             teacher = lesson.get('teacher', '').strip()
             room = lesson.get('room', '').strip()
-            
             if subject and subject != "-----":
-                text += f"📚 Предмет: {subject}\n"
+                line = f"📚 {subject}"
                 if teacher:
-                    text += f"👤 Преподаватель: {teacher}\n"
+                    line += f" | {teacher}"
                 if room:
-                    text += f"🚪 Кабинет: {room}\n"
-                text += "\n"
+                    line += f" | Каб. {room}"
+                text += line + "\n"
         text += "\n"
-    
-    # Добавляем замены, если есть
-    if group in replacements_data:
-        text += "\n🔄 ЗАМЕНЫ В РАСПИСАНИИ:\n"
-        for date, replacements in replacements_data[group].items():
-            text += f"\n📅 {date}:\n"
-            for rep in replacements:
-                text += f"{'_' * 7} Занятие №{rep['lesson']} {'_' * 7}\n"
-                text += f"         ⏰«{LESSON_TIMES.get(f'{rep['lesson']} пара', 'Время не указано')}»\n\n"
-                text += f"📚 Предмет: {rep['subject']}\n"
-                if rep.get('teacher'):
-                    text += f"👤 Преподаватель: {rep['teacher']}\n"
-                text += f"🚪 Кабинет: {rep['room']}\n\n"
-    
     return text
 
 @router.callback_query(F.data.startswith("group_"))
@@ -431,3 +402,27 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
+
+@router.message(Command("stats"))
+async def admin_stats(message: types.Message, db=None):
+    if message.from_user.id not in ADMINS:
+        await message.answer("⛔️ Доступ только для админов!")
+        return
+    if not db:
+        await message.answer("Ошибка подключения к базе данных")
+        return
+    users_count = await db.fetchval("SELECT COUNT(*) FROM users")
+    groups_count = await db.fetchval("SELECT COUNT(*) FROM groups")
+    await message.answer(f"Статистика:\nПользователей: <b>{users_count}</b>\nГрупп: <b>{groups_count}</b>", parse_mode="HTML")
+
+@router.message(Command("groups"))
+async def admin_groups(message: types.Message, db=None):
+    if message.from_user.id not in ADMINS:
+        await message.answer("⛔️ Доступ только для админов!")
+        return
+    if not db:
+        await message.answer("Ошибка подключения к базе данных")
+        return
+    groups = await db.fetch("SELECT name FROM groups ORDER BY name")
+    text = "Список групп:\n" + "\n".join([g['name'] for g in groups])
+    await message.answer(text)
