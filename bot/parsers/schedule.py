@@ -44,11 +44,17 @@ def get_random_headers():
     # Получаем список агентов для выбранной платформы
     agents = USER_AGENTS.get(platform, [])
     
-    # Если список пуст, используем дефолтный User-Agent
-    user_agent = random.choice(agents) if agents else (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
-    )
+    # Если список пуст, пробуем взять случайный агент из любой доступной платформы
+    if not agents:
+        all_agents = []
+        for platform_agents in USER_AGENTS.values():
+            all_agents.extend(platform_agents)
+        user_agent = random.choice(all_agents) if all_agents else (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+        )
+    else:
+        user_agent = random.choice(agents)
     
     return {
         "User-Agent": user_agent,
@@ -101,11 +107,11 @@ def fetch_schedule():
         group_cols = [col for col in df.columns if '-' in str(col)]
         
         for group_col in group_cols:
-            schedule_data[group_col] = []
+            schedule_data[group_col] = {}
             
             # Проверяем, не на практике ли группа
             if group_col in practice_data:
-                schedule_data[group_col] = [{'is_practice': True, 'practice_info': practice_data[group_col]}]
+                schedule_data[group_col] = {'practice': [{'is_practice': True, 'practice_info': practice_data[group_col]}]}
                 continue
                 
             # Получаем день недели из первой колонки
