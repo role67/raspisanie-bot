@@ -145,7 +145,7 @@ def format_schedule_for_group(group_lessons):
     Форматирует расписание для группы в красивый текст для Telegram.
     group_lessons: список занятий (dict с ключами lesson_number, time, subject, teacher, room)
     """
-    from .lesson_times import LESSON_TIMES, get_schedule_string
+    from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES, get_schedule_string
     from datetime import datetime
     
     if not group_lessons:
@@ -158,6 +158,14 @@ def format_schedule_for_group(group_lessons):
         
     weekday = datetime.now().weekday()
     schedule_header = get_schedule_string(weekday)
+    
+    # Выбираем расписание времени в зависимости от дня недели
+    if weekday == 0:  # Понедельник
+        times_dict = LESSON_TIMES
+    elif weekday == 5:  # Суббота
+        times_dict = SATURDAY_TIMES
+    else:  # Вторник-пятница
+        times_dict = WEEKDAY_TIMES
     
     # Сгруппируем пары по номерам
     lessons_by_number = {}
@@ -175,7 +183,7 @@ def format_schedule_for_group(group_lessons):
             
         lesson_num = time.split()[0]  # Получаем номер пары из "1 пара"
         lines.append(f"{'_' * 7} Занятие №{lesson_num} {'_' * 7}")
-        lines.append(f"         ⏰«{LESSON_TIMES.get(time, 'Время не указано')}»\n")
+        lines.append(f"         ⏰«{times_dict.get(time, 'Время не указано')}»\n")
         
         for lesson in lessons:
             subject = lesson.get('subject', '').strip()
