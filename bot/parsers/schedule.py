@@ -2,15 +2,70 @@ import pandas as pd
 import requests
 from io import BytesIO
 from docx import Document
+import random
+import os
+from pathlib import Path
 
 SCHEDULE_URL = "https://www.nkptiu.ru/doc/raspisanie/raspisanie.xls"
 REPLACEMENTS_URL = "https://www.nkptiu.ru/doc/raspisanie/zameni.docx"
+
+def load_user_agents():
+    """Загружает User-Agent'ы из файлов"""
+    agents = {
+        'windows': [],
+        'mac': [],
+        'ios': [],
+        'android': []
+    }
+    
+    base_path = Path(__file__).parent.parent / 'useragents'
+    
+    # Загружаем по 100 агентов каждого типа
+    for platform in agents.keys():
+        file_path = base_path / f"{platform}.txt"
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                # Берем первые 100 строк, пропуская пустые
+                agents[platform] = [line.strip() for line in f if line.strip()][:100]
+    
+    return agents
+
+# Загружаем User-Agent'ы при импорте модуля
+USER_AGENTS = load_user_agents()
+
+def get_random_headers():
+    """Возвращает случайный User-Agent и базовые заголовки"""
+    # Выбираем платформу с разными весами
+    platform = random.choices(
+        ['windows', 'mac', 'ios', 'android'],
+        weights=[0.4, 0.3, 0.2, 0.1]  # 40% Windows, 30% Mac, 20% iOS, 10% Android
+    )[0]
+    
+    # Получаем список агентов для выбранной платформы
+    agents = USER_AGENTS.get(platform, [])
+    
+    # Если список пуст, используем дефолтный User-Agent
+    user_agent = random.choice(agents) if agents else (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+    )
+    
+    return {
+        "User-Agent": user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    }
 
 
 def fetch_schedule():
     """Получает и парсит основное расписание"""
     try:
-        resp = requests.get(SCHEDULE_URL)
+        headers = get_random_headers()
+        resp = requests.get(SCHEDULE_URL, headers=headers)
         resp.raise_for_status()
         xls = BytesIO(resp.content)
         try:
@@ -120,7 +175,8 @@ def fetch_schedule():
 def fetch_replacements():
     """Получает и парсит замены в расписании"""
     try:
-        resp = requests.get(REPLACEMENTS_URL)
+        headers = get_random_headers()
+        resp = requests.get(REPLACEMENTS_URL, headers=headers)
         resp.raise_for_status()
         doc = Document(BytesIO(resp.content))
         print(f"doc.tables: {len(doc.tables)} таблиц")
