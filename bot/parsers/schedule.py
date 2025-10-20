@@ -67,6 +67,28 @@ def get_random_headers():
     }
 
 
+def process_teacher_and_room(value):
+    """Разделяет учителя и кабинет из строки"""
+    if not value or str(value).strip().lower() == 'nan':
+        return '', ''
+        
+    value = str(value).strip()
+    
+    # Специальная обработка общежития
+    if value.lower() in ['общ', 'общ.', 'общага']:
+        return '', 'Общежитие'
+        
+    # Если есть номер через дефис (например 201-4), это кабинет
+    if '-' in value and any(c.isdigit() for c in value):
+        return '', value
+        
+    # Если это просто номер, это тоже кабинет
+    if value.isdigit():
+        return '', value
+        
+    # Иначе считаем что это преподаватель
+    return value, ''
+
 def fetch_schedule():
     """Получает и парсит основное расписание"""
     try:
@@ -144,37 +166,23 @@ def fetch_schedule():
                 if not time or not subject or subject.lower() == 'nan':
                     continue
                 
-                # Определяем является ли значение похожим на номер кабинета
-                def is_room_number(text):
-                    return bool(text and any(c.isdigit() for c in text) and 
-                              ('-' in text or text.lower() in ['общ', 'общ.', 'общага']))
-
-                room = ''
-                clean_teacher = ''
-
-                if teacher:
-                    parts = teacher.split()
-                    # Ищем номер кабинета среди частей
-                    for part in parts:
-                        if is_room_number(part):
-                            room = part
-                        else:
-                            clean_teacher += part + ' '
-                    clean_teacher = clean_teacher.strip()
-
-                    # Если учитель пустой, а кабинет есть - возможно учитель был неправильно определен как кабинет
-                    if not clean_teacher and room:
-                        # Проверяем не является ли "кабинет" фамилией преподавателя
-                        if not is_room_number(room):
-                            clean_teacher = room
-                            room = ''
+                # Разделяем учителя и кабинет
+                clean_teacher, room = process_teacher_and_room(teacher)
                 
                 if subject and subject != "-----":
+                    # Форматируем кабинет
+                    formatted_room = room
+                    if room:
+                        if room.lower() in ['общ', 'общ.', 'общага']:
+                            formatted_room = 'Общежитие'
+                        elif '-' in room or room.isdigit():
+                            formatted_room = f"Каб. {room}"
+                            
                     current_schedule.append({
                         'time': time,
                         'subject': subject,
                         'teacher': clean_teacher if clean_teacher and clean_teacher.lower() != 'nan' else '',
-                        'room': room.replace('общ', 'Общежитие').replace('общ.', 'Общежитие'),
+                        'room': formatted_room,
                         'is_practice': False
                     })
             
