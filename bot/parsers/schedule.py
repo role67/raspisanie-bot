@@ -265,11 +265,12 @@ def fetch_schedule():
             day_col = df.columns[0]
             cabinet_col = df.columns[df.columns.get_loc(group_col) + 1]
             current_day = None
-            current_schedule = []
             lesson_counter = 0
             week_lessons = {1: [], 2: []}
-            for idx, row in df.iterrows():
-                if idx >= practice_start if len(practice_rows) > 0 else False:
+            i = 0
+            while i < len(df):
+                row = df.iloc[i]
+                if i >= practice_start if len(practice_rows) > 0 else False:
                     break
                 # Новый день недели
                 if pd.notna(row[day_col]) and str(row[day_col]).strip():
@@ -286,67 +287,52 @@ def fetch_schedule():
                 cabinet_value = str(row.get(cabinet_col, '')).strip()
                 # Пропуск пустых строк
                 if not time or cell_value.lower() == 'nan':
+                    i += 1
                     continue
                 # Определяем номер пары
                 if time and not any(x in time.lower() for x in ['снимаются', 'проводятся']):
                     lesson_counter += 1
                 else:
+                    i += 1
                     continue
-                # Обработка недель и "-----"
+                # Если cell_value == -----, значит пары нет на этой неделе
                 if cell_value == "-----":
-                    # Пара только на одну неделю, ищем следующую строку
+                    i += 1
                     continue
-                # Проверка на подгруппы (две фамилии через /)
-                if '/' in cell_value:
-                    # Предмет и два препода, делим на подгруппы
-                    subject = None
-                    teachers = [t.strip() for t in cell_value.split('/')]
-                    cabinets = [c.strip() for c in cabinet_value.split('/')]
-                    for i, teacher in enumerate(teachers):
-                        lesson_dict = {
-                            'lesson_number': lesson_counter,
-                            'time': time,
-                            'subject': subject if subject else '',
-                            'teacher': teacher,
-                            'room': cabinets[i] if i < len(cabinets) else cabinet_value,
-                            'week_number': 1,
-                            'is_subgroup': True,
-                            'subgroup': i+1,
-                            'file_hash': file_hash
-                        }
-                        week_lessons[1].append(lesson_dict)
-                    continue
-                # Обычная пара
+                # Предмет
                 subject = cell_value
-                teacher = None
                 # Следующая строка — преподаватель
-                if idx+1 < len(df):
-                    next_value = str(df.iloc[idx+1].get(group_col, '')).strip()
+                teacher = ''
+                next_teacher = ''
+                if i+1 < len(df):
+                    next_row = df.iloc[i+1]
+                    next_value = str(next_row.get(group_col, '')).strip()
                     if next_value and next_value != "-----":
                         teacher = next_value
-                        # Проверка на подгруппы в ФИО
+                        # Если есть подгруппы (через /)
                         if '/' in teacher:
                             teachers = [t.strip() for t in teacher.split('/')]
                             cabinets = [c.strip() for c in cabinet_value.split('/')]
-                            for i, teacher_item in enumerate(teachers):
+                            for idx_sub, teacher_item in enumerate(teachers):
+                                room = cabinets[idx_sub] if idx_sub < len(cabinets) else cabinet_value
+                                if teacher_item.lower() in ['каверзнева', 'видякова']:
+                                    room = 'Общежитие'
                                 lesson_dict = {
                                     'lesson_number': lesson_counter,
                                     'time': time,
                                     'subject': subject,
                                     'teacher': teacher_item,
-                                    'room': cabinets[i] if i < len(cabinets) else cabinet_value,
+                                    'room': room if room and room.lower() != 'nan' else '—',
                                     'week_number': 1,
                                     'is_subgroup': True,
-                                    'subgroup': i+1,
+                                    'subgroup': idx_sub+1,
                                     'file_hash': file_hash
                                 }
                                 week_lessons[1].append(lesson_dict)
+                            i += 2
                             continue
                         # Физкультура — особый случай
-                        if teacher.lower() in ['каверзнева', 'видякова']:
-                            room = 'Общежитие'
-                        else:
-                            room = cabinet_value
+                        room = 'Общежитие' if teacher.lower() in ['каверзнева', 'видякова'] else (cabinet_value if cabinet_value and cabinet_value.lower() != 'nan' else '—')
                         lesson_dict = {
                             'lesson_number': lesson_counter,
                             'time': time,
@@ -358,19 +344,22 @@ def fetch_schedule():
                             'file_hash': file_hash
                         }
                         week_lessons[1].append(lesson_dict)
+                        i += 2
                         continue
                 # Если нет преподавателя — просто предмет и кабинет
+                room = cabinet_value if cabinet_value and cabinet_value.lower() != 'nan' else '—'
                 lesson_dict = {
                     'lesson_number': lesson_counter,
                     'time': time,
                     'subject': subject,
                     'teacher': '',
-                    'room': cabinet_value,
+                    'room': room,
                     'week_number': 1,
                     'is_subgroup': False,
                     'file_hash': file_hash
                 }
                 week_lessons[1].append(lesson_dict)
+                i += 1
             # Добавляем последний день
             if current_day and (week_lessons[1] or week_lessons[2]):
                 if not isinstance(schedule_data[group_col], dict):
