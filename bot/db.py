@@ -136,6 +136,16 @@ async def update_groups_list(pool, groups):
                     [(group,) for group in groups]
                 )
 
+def clear_schedule_cache():
+    """Очищает кэш расписания"""
+    global _schedule_cache
+    _schedule_cache = {}
+
+def clear_week_cache():
+    """Очищает кэш текущей недели"""
+    global _current_week_cache
+    _current_week_cache = {'value': None, 'timestamp': 0}
+
 async def update_current_week(pool):
     """Обновляет номер текущей недели"""
     async with pool.acquire() as conn:
@@ -148,13 +158,34 @@ async def update_current_week(pool):
             changed_at = NOW()
             WHERE id = 1
         """)
+        
+    # Очищаем кэши после обновления недели
+    clear_week_cache()
+    clear_schedule_cache()
+
+# Кэш для текущей недели
+_current_week_cache = {'value': None, 'timestamp': 0}
+_week_cache_ttl = 60  # 1 минута
 
 async def get_current_week(pool):
     """Получает номер текущей недели"""
+    from time import time
+    
+    # Проверяем кэш
+    if _current_week_cache['value'] is not None:
+        if time() - _current_week_cache['timestamp'] < _week_cache_ttl:
+            return _current_week_cache['value']
+    
     async with pool.acquire() as conn:
-        return await conn.fetchval("""
+        value = await conn.fetchval("""
             SELECT week_number FROM current_week WHERE id = 1
         """)
+        
+        # Обновляем кэш
+        _current_week_cache['value'] = value
+        _current_week_cache['timestamp'] = time()
+        
+        return value
 
 async def get_or_create_subject(pool, subject_name):
     """Получает или создает запись о предмете"""
@@ -197,6 +228,11 @@ async def store_schedule(pool, schedule_data):
         print("Нет данных для сохранения")
         return
         
+    # Подготавливаем данные для массовой вставки
+    schedule_values = []
+    subject_names = set()
+    teacher_names = set()
+    
     async with pool.acquire() as conn:
         async with conn.transaction():
             try:
@@ -225,46 +261,85 @@ async def store_schedule(pool, schedule_data):
                 print(f"Ошибка при подготовке к сохранению расписания: {e}")
                 raise
             
+            # Собираем все предметы и преподавателей
+            for group, days in schedule_data.items():
+                for day, lessons in days.items():
+                    for lesson in lessons:
+                        if lesson.get('subject'):
+                            subject_names.add(lesson['subject'])
+                        if lesson.get('teacher'):
+                            teacher_names.add(lesson['teacher'])
+                            
+            # Массово создаем предметы и преподавателей
+            await conn.executemany(
+                "INSERT INTO subjects (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+                [(name,) for name in subject_names]
+            )
+            await conn.executemany(
+                "INSERT INTO teachers (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+                [(name,) for name in teacher_names]
+            )
+            
+            # Получаем словари с id предметов и преподавателей
+            subjects = await conn.fetch("SELECT id, name FROM subjects WHERE name = ANY($1)", list(subject_names))
+            teachers = await conn.fetch("SELECT id, name FROM teachers WHERE name = ANY($1)", list(teacher_names))
+            
+            subject_ids = {s['name']: s['id'] for s in subjects}
+            teacher_ids = {t['name']: t['id'] for t in teachers}
+            
             # Обрабатываем данные
             for group, days in schedule_data.items():
-                has_two_week_schedule = False
-                
-                # Проверяем, есть ли у группы разное расписание по неделям
-                for day, lessons in days.items():
-                    if any(lesson.get('week_number') == 2 for lesson in lessons):
-                        has_two_week_schedule = True
-                        break
+                has_two_week_schedule = any(
+                    any(lesson.get('week_number') == 2 for lesson in lessons)
+                    for lessons in days.values()
+                )
 
                 for day, lessons in days.items():
                     for lesson in lessons:
-                        # Получаем или создаем записи для предмета и преподавателя
-                        subject_id = await get_or_create_subject(pool, lesson['subject'])
-                        teacher_id = await get_or_create_teacher(pool, lesson['teacher'])
+                        # Получаем id предмета и преподавателя
+                        subject_id = subject_ids.get(lesson['subject'])
+                        teacher_id = teacher_ids.get(lesson.get('teacher'))
                         
                         # Определяем номер недели
                         week_number = lesson.get('week_number', 1)
-                        if not has_two_week_schedule:
-                            # Если нет разделения по неделям, создаем записи для обеих недель
-                            week_numbers = [1, 2]
-                        else:
-                            week_numbers = [week_number]
+                        week_numbers = [1, 2] if not has_two_week_schedule else [week_number]
                             
                         for week in week_numbers:
-                            await conn.execute("""
-                                INSERT INTO schedule (
-                                    group_name, day_of_week, lesson_number,
-                                    subject_id, teacher_id, classroom,
-                                    start_time, end_time, week_number,
-                                    has_two_week_schedule, file_hash
-                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                            """,
-                            group, day, lesson['lesson_number'],
-                            subject_id, teacher_id, lesson['room'],
-                            lesson['start_time'], lesson['end_time'], week,
-                            has_two_week_schedule, file_hash)
+                            schedule_values.append((
+                                group, day, lesson['lesson_number'],
+                                subject_id, teacher_id, lesson['room'],
+                                lesson['start_time'], lesson['end_time'], week,
+                                has_two_week_schedule, file_hash
+                            ))
+            
+            # Массовая вставка расписания
+            await conn.executemany("""
+                INSERT INTO schedule (
+                    group_name, day_of_week, lesson_number,
+                    subject_id, teacher_id, classroom,
+                    start_time, end_time, week_number,
+                    has_two_week_schedule, file_hash
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            """, schedule_values)
+            
+            # Очищаем кэш после обновления
+            clear_schedule_cache()
+
+# Кэш для расписания: {(group_name, day_of_week, week_number): (data, timestamp)}
+_schedule_cache = {}
+_cache_ttl = 300  # 5 минут
 
 async def get_schedule(pool, group_name, day_of_week=None, week_number=None):
     """Получает расписание из БД с учетом недели"""
+    from time import time
+    
+    # Проверяем кэш
+    cache_key = (group_name, day_of_week, week_number)
+    if cache_key in _schedule_cache:
+        data, timestamp = _schedule_cache[cache_key]
+        if time() - timestamp < _cache_ttl:
+            return data
+    
     async with pool.acquire() as conn:
         # Если неделя не указана, получаем текущую
         if week_number is None:
@@ -311,4 +386,9 @@ async def get_schedule(pool, group_name, day_of_week=None, week_number=None):
             """
             rows = await conn.fetch(query, group_name, week_number)
         
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+        
+        # Сохраняем в кэш
+        _schedule_cache[cache_key] = (result, time())
+        
+        return result
