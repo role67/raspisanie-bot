@@ -1,4 +1,3 @@
-
 import pandas as pd
 import requests
 from io import BytesIO
@@ -167,6 +166,7 @@ def fetch_schedule():
                 return _schedule_cache
             xls = BytesIO(resp.content)
         except Exception:
+            pass
             return {}
         try:
             try:
@@ -333,8 +333,7 @@ def fetch_schedule():
         _schedule_cache = schedule_data
         _schedule_cache_hash = file_hash
         return schedule_data
-    except Exception as e:
-        print(f"Error in fetch_schedule: {e}")
+    except Exception:
         return {}
 
 def fetch_replacements():
@@ -591,48 +590,37 @@ def format_day_schedule(group_lessons, day, date_str=None, replacements=None, la
             lines = [f"📅 {date_str} | {day_map.get(day, day)}\n"]
         else:
             lines = [f"📅 {day_map.get(day, day)}\n"]
-            
         # Проверяем наличие расписания
         if not group_lessons or day not in group_lessons:
             lines.append("\n❌ Расписание на этот день не найдено")
             return '\n'.join(lines)
-
         lessons = group_lessons.get(day, [])
         if not isinstance(lessons, list):
-            print(f"Ошибка: расписание на {day} не является списком")
             lines.append("\n❌ Ошибка в формате расписания")
             return '\n'.join(lines)
-            
         # Обработка уроков
         for idx, lesson in enumerate(lessons, 1):
             try:
                 if not isinstance(lesson, dict):
-                    print(f"Ошибка: некорректный формат урока #{idx}")
                     continue
-                    
                 subject = lesson.get('subject', '').strip()
                 teacher = lesson.get('teacher', '').strip()
                 room = lesson.get('room', '').strip()
                 time = lesson.get('time', '').strip()
-                
                 if not subject or subject == "-----":
                     continue
-                    
-            except Exception as e:
-                print(f"Ошибка при обработке урока #{idx}: {e}")
+            except Exception:
                 continue
-                
-    # Время пары
-    time_str = times_dict.get(time, time)
-    # Формируем строку пары
-    lesson_str = f"{idx}️⃣ {subject} | {time_str}"
-    lines.append(lesson_str)
-    
-    if teacher:
-        lines.append(f"👤 {teacher}")
-    if room:
-        lines.append(f"🚪 {room}")
-    lines.append("")
+            time_str = times_dict.get(time, time)
+            lesson_str = f"{idx}️⃣ {subject} | {time_str}"
+            lines.append(lesson_str)
+            if teacher:
+                lines.append(f"👤 {teacher}")
+            if room:
+                lines.append(f"🚪 {room}")
+            lines.append("")
+    except Exception:
+        pass
 
     # Замены
     try:
