@@ -149,8 +149,19 @@ def fetch_schedule():
     try:
         try:
             headers = get_random_headers()
-            resp = requests.get(SCHEDULE_URL, headers=headers)
+            resp = requests.get(SCHEDULE_URL, headers=headers, timeout=30)
             resp.raise_for_status()
+            
+            print(f"Получен ответ: {resp.status_code}, размер: {len(resp.content)} байт")
+            
+            if resp.status_code != 200:
+                print(f"Неверный статус ответа: {resp.status_code}")
+                return {}
+                
+            if len(resp.content) < 1000:  # Файл слишком маленький
+                print("Подозрительно маленький размер файла")
+                return {}
+                
             xls = BytesIO(resp.content)
         except requests.exceptions.RequestException as e:
             print(f"Ошибка при получении файла расписания: {e}")
@@ -167,11 +178,32 @@ def fetch_schedule():
         current_week = 1
         
         try:
-            # Читаем файл с сохранением форматирования
-            df = pd.read_excel(xls, engine='xlrd', na_values=[''])
+            # Попробуем оба движка Excel
+            try:
+                print("Пробуем xlrd движок...")
+                df = pd.read_excel(xls, engine='xlrd', na_values=[''])
+            except:
+                print("xlrd не сработал, пробуем openpyxl...")
+                xls.seek(0)  # Сбрасываем позицию в начало файла
+                df = pd.read_excel(xls, engine='openpyxl', na_values=[''])
+            
+            print("Размер DataFrame:", df.shape)
+            
             if df.empty:
                 print("Файл расписания не содержит данных")
                 return {}
+                
+            # Проверяем структуру данных
+            if len(df.columns) < 3:
+                print("Неверная структура файла (мало колонок)")
+                return {}
+                
+            # Выводим первые строки для отладки
+            print("\nПервые строки:")
+            print(df.head())
+            print("\nКолонки:")
+            print(df.columns.tolist())
+            
         except pd.errors.EmptyDataError:
             print("Файл расписания пуст")
             return {}
@@ -208,7 +240,21 @@ def fetch_schedule():
         from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
 
         schedule_data = {}
-        group_cols = [col for col in df.columns if '-' in str(col)]
+        
+        # Определяем колонки групп по шаблону: буквы+дефис+цифры (например "ИСП-21")
+        group_cols = [col for col in df.columns 
+                     if isinstance(col, str) and 
+                     '-' in col and 
+                     any(c.isalpha() for c in col) and 
+                     any(c.isdigit() for c in col)]
+        
+        print("\nНайденные группы:", group_cols)
+        
+        if not group_cols:
+            print("Не найдено ни одной группы в файле")
+            # Выводим все колонки для отладки
+            print("Все колонки:", df.columns.tolist())
+            return {}
 
         for group_col in group_cols:
             schedule_data[group_col] = {}
@@ -216,6 +262,8 @@ def fetch_schedule():
             if group_col in practice_data:
                 schedule_data[group_col] = {'practice': [{'is_practice': True, 'practice_info': practice_data[group_col]}]}
                 continue
+                
+            print(f"\nОбработка группы {group_col}...")
 
             day_col = df.columns[0]
             current_day = None
@@ -352,7 +400,7 @@ def fetch_schedule():
                     'file_hash': file_hash
                 }
                 
-                print(f"Добавлена пара для {group_col} ({day}, неделя {current_week}):")
+                print(f"Добавлена пара для {group_col} ({current_day}, неделя {current_week}):")
                 print(f"Предмет: {subject}")
                 print(f"Преподаватель: {teacher}")
                 print(f"Кабинет: {room}")
@@ -411,42 +459,99 @@ def fetch_replacements():
                     try:
                         cells = [cell.text.strip() for cell in row.cells]
                         print(f"Row {row_idx}: {cells}")
-                        
-                        # Обработка даты
-                        if len(cells) >= 1 and "20" in cells[0]:
-                            current_date = cells[0]
+
+                        # Поиск даты в первой или второй ячейке
+                        date_candidate = None
+                        for c in cells[:2]:
+                            if c and "20" in c and "." in c and len(c) >= 8:
+                                date_candidate = c
+                                break
+                        # Если нашли дату, обновляем current_date и пропускаем строку
+                        if date_candidate:
+                            current_date = date_candidate
                             print(f"Найдена дата: {current_date}")
                             continue
-                            
+
+                        # Пропуск строк без даты и без группы
                         if not current_date:
-                            print(f"Пропуск строки {row_idx}: не определена дата")
+                            # Если строка не содержит группу, это заголовок или пустая строка
+                            if not cells or not any(cells):
+                                continue
+                            # Если первая ячейка не похожа на группу, пропускаем
+                            group_candidate = cells[0].strip() if cells else ""
+                            if not group_candidate or group_candidate.lower() in ["шифр группы", ""]:
+                                continue
+                            # Если нет даты, но есть группа, просто пропускаем (не спамим лог)
                             continue
-                            
+
+                        # Пропуск пустых строк
                         if not any(cells):
                             continue
-                            
-                        if len(cells) >= 4:
-                            group = cells[0].strip()
-                            if group:
-                                # Проверяем валидность данных
-                                subject = cells[2].strip()
-                                if not subject:
-                                    print(f"Пропуск замены для группы {group}: не указан предмет")
-                                    continue
-                                    
-                                if group not in replacements_data:
-                                    replacements_data[group] = {}
-                                if current_date not in replacements_data[group]:
-                                    replacements_data[group][current_date] = []
-                                    
-                                replacement = {
-                                    'lesson': cells[1].strip(),
+
+                        # Основная логика разбора замен
+                        # Ожидается: [группа, № пары, № пары, дисциплина, ФИО, № пары, дисциплина, ФИО, аудитория]
+                        # Но иногда бывает только 4 колонки: [группа, № пары, предмет, кабинет]
+                        group = cells[0].strip() if len(cells) > 0 else ""
+                        if not group:
+                            continue
+
+                        # Универсальный разбор: ищем все замены в строке (может быть 2 замены для одной группы)
+                        # Пример: ['Бд-241', '3-4', '3-4', 'МДК.01.01', 'Литвинова', '3-4', 'История России', 'Лыкова', '401-1\n404-1']
+                        # Первая замена: [1] пара, [3] предмет, [4] ФИО, [8] аудитория (если есть)
+                        # Вторая замена: [5] пара, [6] предмет, [7] ФИО, [8] аудитория (если есть)
+                        # Если только 4 колонки: [группа, пара, предмет, кабинет]
+
+                        if group not in replacements_data:
+                            replacements_data[group] = {}
+                        if current_date not in replacements_data[group]:
+                            replacements_data[group][current_date] = []
+
+                        # Если строка длинная (две замены)
+                        if len(cells) >= 8:
+                            # Первая замена
+                            lesson1 = cells[1].strip()
+                            subject1 = cells[3].strip()
+                            teacher1 = cells[4].strip()
+                            room1 = cells[8].strip() if len(cells) > 8 else ""
+                            if subject1 and lesson1:
+                                replacements_data[group][current_date].append({
+                                    'lesson': lesson1,
+                                    'subject': subject1,
+                                    'teacher': teacher1,
+                                    'room': room1,
+                                })
+                                print(f"Добавлена замена для группы {group} (1)")
+                            # Вторая замена
+                            lesson2 = cells[5].strip()
+                            subject2 = cells[6].strip()
+                            teacher2 = cells[7].strip()
+                            room2 = cells[8].strip() if len(cells) > 8 else ""
+                            if subject2 and lesson2:
+                                replacements_data[group][current_date].append({
+                                    'lesson': lesson2,
+                                    'subject': subject2,
+                                    'teacher': teacher2,
+                                    'room': room2,
+                                })
+                                print(f"Добавлена замена для группы {group} (2)")
+                        # Если строка обычная (одна замена)
+                        elif len(cells) >= 4:
+                            lesson = cells[1].strip()
+                            subject = cells[2].strip()
+                            teacher = cells[3].strip() if len(cells) > 3 else ""
+                            room = cells[4].strip() if len(cells) > 4 else ""
+                            if subject and lesson:
+                                replacements_data[group][current_date].append({
+                                    'lesson': lesson,
                                     'subject': subject,
-                                    'room': cells[3].strip(),
-                                }
-                                replacements_data[group][current_date].append(replacement)
+                                    'teacher': teacher,
+                                    'room': room,
+                                })
                                 print(f"Добавлена замена для группы {group}")
-                                
+                        # Если строка короткая, пропускаем
+                        else:
+                            continue
+
                     except Exception as e:
                         print(f"Ошибка при обработке строки {row_idx}: {e}")
                         continue
