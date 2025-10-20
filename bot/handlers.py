@@ -1,6 +1,6 @@
 import logging
 from aiogram import Router, F, types
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
@@ -47,12 +47,67 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, pool=No
 
 # Обработчики нажатий на кнопки главного меню
 @router.message(F.text == "Расписание 📝")
-async def main_schedule(message: types.Message, bot):
-    await message.answer("📅 Для просмотра расписания выберите свою группу через /start или используйте меню выбора группы.")
+async def main_schedule(message: types.Message, bot, db=None):
+    if not db:
+        await message.answer("Ошибка подключения к базе данных")
+        return
+        
+    user = await db.fetchrow("SELECT group_name FROM users WHERE user_id = $1", message.from_user.id)
+    if not user or not user['group_name']:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="📚 Выбрать группу", callback_data="show_groups")
+        await message.answer(
+            "Сначала выберите вашу группу:",
+            reply_markup=builder.as_markup()
+        )
+        return
+        
+    # Show schedule for user's group
+    group = user['group_name']
+    text = await get_schedule_text(group)
+    
+    # Create keyboard for navigation
+    builder = InlineKeyboardBuilder()
+    builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
+    builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
+    
+    await message.answer(text, reply_markup=builder.as_markup())
 
 @router.message(F.text == "Замены ✏️")
-async def main_replacements(message: types.Message, bot):
-    await message.answer("🔄 Для просмотра замен выберите свою группу через /start или используйте меню выбора группы.")
+async def main_replacements(message: types.Message, bot, db=None):
+    if not db:
+        await message.answer("Ошибка подключения к базе данных")
+        return
+        
+    user = await db.fetchrow("SELECT group_name FROM users WHERE user_id = $1", message.from_user.id)
+    if not user or not user['group_name']:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="📚 Выбрать группу", callback_data="show_groups")
+        await message.answer(
+            "Сначала выберите вашу группу:",
+            reply_markup=builder.as_markup()
+        )
+        return
+        
+    # Check replacements for user's group
+    group = user['group_name']
+    replacements_data = fetch_replacements()
+    
+    if group not in replacements_data:
+        await message.answer("✅ Замен для вашей группы нет")
+        return
+        
+    text = f"🔄 Замены для группы {group}:\n\n"
+    for date, replacements in replacements_data[group].items():
+        text += f"📅 {date}:\n"
+        for rep in replacements:
+            text += f"{'_' * 7} Занятие №{rep['lesson']} {'_' * 7}\n"
+            text += f"📚 Предмет: {rep['subject']}\n"
+            if rep.get('teacher'):
+                text += f"👤 Преподаватель: {rep['teacher']}\n"
+            text += f"🚪 Кабинет: {rep['room']}\n\n"
+            
+    await message.answer(text)
 
 from datetime import datetime
 from .parsers.lesson_times import get_current_lesson_info, get_schedule_string
@@ -66,9 +121,18 @@ async def main_time(message: types.Message, bot):
     text = f"{current_info}\n\n{schedule}"
     await message.answer(text)
 
+
 @router.message(F.text == "Профиль 🧑")
-async def main_profile(message: types.Message, bot):
-    await message.answer("👤 Для просмотра профиля используйте команду /profile.")
+@router.message(Command("profile"))
+async def main_profile(message: types.Message, bot, db=None):
+    if not db:
+        await message.answer("Ошибка подключения к базе данных")
+        return
+    user = await db.fetchrow("SELECT group_name FROM users WHERE user_id = $1", message.from_user.id)
+    if not user or not user['group_name']:
+        await message.answer("Вы не выбрали группу. Выберите группу через меню.")
+        return
+    await message.answer(f"👤 Ваш профиль:\nГруппа: <b>{user['group_name']}</b>", parse_mode="HTML")
 
 @router.message(F.text == "Админ панель 🛠")
 async def main_admin_panel(message: types.Message, bot):
@@ -217,7 +281,7 @@ async def get_schedule_text(group: str) -> str:
 async def choose_group(callback: types.CallbackQuery, state: FSMContext, db=None):
     try:
         # Отвечаем на callback немедленно
-        await callback.answer()
+        await callback.answer("⏳ Сохраняю выбор...")
         
         group = callback.data.replace("group_", "")
         
@@ -225,15 +289,26 @@ async def choose_group(callback: types.CallbackQuery, state: FSMContext, db=None
             await callback.message.edit_text("Ошибка подключения к базе данных")
             return
             
-        # Сохраняем выбор группы
-        await db.execute(
-            """
-            INSERT INTO users (user_id, group_name) 
-            VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE SET group_name = $2
-            """,
-            callback.from_user.id, group
-        )
+        # Проверяем существование группы
+        group_exists = await db.fetchval("SELECT name FROM groups WHERE name = $1", group)
+        if not group_exists:
+            await callback.message.edit_text("❌ Выбранная группа не найдена в базе данных")
+            return
+            
+        # Сохраняем выбор группы в транзакции
+        async with db.transaction():
+            await db.execute(
+                """
+                INSERT INTO users (user_id, group_name) 
+                VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE SET group_name = $2
+                """,
+                callback.from_user.id, group
+            )
+            
+        # Подтверждаем сохранение
+        await callback.answer("✅ Группа сохранена!", show_alert=True)
+            
     except Exception as e:
         logging.error(f"Error in choose_group: {e}")
         try:
