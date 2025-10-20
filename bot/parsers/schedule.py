@@ -67,6 +67,40 @@ def get_random_headers():
     }
 
 
+def process_subject_and_teacher(value):
+    """Разделяет предмет и преподавателя из одной строки"""
+    if not value or str(value).strip().lower() == 'nan':
+        return '', ''
+    
+    value = str(value).strip()
+    parts = value.split(')')  # Разделяем по скобке, если есть
+    
+    # Если есть скобки (например: "МДК.04.01 (Болдовская)")
+    if len(parts) > 1:
+        subject = parts[0].strip() + ')'
+        teacher = parts[1].strip()
+        return subject, teacher
+    
+    # Если есть явное указание языка
+    if '(нем)' in value.lower() or '(англ)' in value.lower():
+        parts = value.split()
+        subject_parts = []
+        teacher_parts = []
+        found_lang = False
+        
+        for part in parts:
+            if '(нем)' in part.lower() or '(англ)' in part.lower():
+                subject_parts.append(part)
+                found_lang = True
+            elif found_lang:
+                teacher_parts.append(part)
+            else:
+                subject_parts.append(part)
+                
+        return ' '.join(subject_parts), ' '.join(teacher_parts)
+    
+    return value, ''
+
 def process_teacher_and_room(value):
     """Разделяет учителя и кабинет из строки"""
     if not value or str(value).strip().lower() == 'nan':
@@ -79,15 +113,28 @@ def process_teacher_and_room(value):
         return '', 'Общежитие'
         
     # Если есть номер через дефис (например 201-4), это кабинет
-    if '-' in value and any(c.isdigit() for c in value):
-        return '', value
+    if '-' in value and any(c.isdigit() for c in value) and len(value) <= 7:
+        return '', f"Каб. {value}"
         
     # Если это просто номер, это тоже кабинет
-    if value.isdigit():
-        return '', value
+    if value.isdigit() and len(value) <= 4:
+        return '', f"Каб. {value}"
+    
+    # Признаки преподавателя:
+    # 1. Фамилия с инициалами (Иванов И.И.)
+    if ' ' in value and any(c == '.' for c in value) and value.split()[0].istitle():
+        return value, ''
+    
+    # 2. Просто фамилия с большой буквы
+    if value.istitle() and value.isalpha() and len(value) > 3:
+        return value, ''
         
-    # Иначе считаем что это преподаватель
-    return value, ''
+    # 3. Фамилия с пробелами без точек (Иванова Мария)
+    if ' ' in value and all(word.istitle() for word in value.split()) and value.replace(' ', '').isalpha():
+        return value, ''
+    
+    # Иначе считаем что это не преподаватель и не кабинет
+    return '', ''
 
 def fetch_schedule():
     """Получает и парсит основное расписание"""
@@ -96,8 +143,13 @@ def fetch_schedule():
         resp = requests.get(SCHEDULE_URL, headers=headers)
         resp.raise_for_status()
         xls = BytesIO(resp.content)
+        
+        # Сохраняем хеш файла для отслеживания изменений
+        file_hash = hash(resp.content)
+        
         try:
-            df = pd.read_excel(xls, engine='xlrd')
+            # Читаем файл с сохранением форматирования
+            df = pd.read_excel(xls, engine='xlrd', na_values=[''])
         except Exception as e:
             print(f"Ошибка чтения xls: {e}")
             print(f"Размер файла: {len(resp.content)} байт")
@@ -157,22 +209,75 @@ def fetch_schedule():
                     lesson_counter = 0
 
                 time = str(row.get('Интервал', '')).strip()
-                subject = str(row.get(group_col, '')).strip()
+                current_value = str(row.get(group_col, '')).strip()
                 next_col = df.columns[df.columns.get_loc(group_col) + 1]
-                teacher_raw = str(row.get(next_col, '')).strip()
-
-                # Пропуск строк без времени или предмета
-                if not time or not subject or subject.lower() == 'nan':
+                next_value = str(row.get(next_col, '')).strip()
+                
+                # Проверяем наличие разделительной линии (пустая строка между парами)
+                is_divider = pd.isna(row.get('Интервал')) and pd.isna(row.get(group_col))
+                
+                if is_divider:
+                    # Начинаем новую неделю
+                    current_week = 2 if current_week == 1 else 1
+                    continue
+                
+                # Пропускаем пустые строки и строки без времени
+                if not time or (not current_value and not next_value) or current_value.lower() == 'nan':
                     continue
 
-                # Определяем номер пары (по порядку в дне)
+                # Определяем номер пары
                 lesson_counter += 1
-
-                # Разделяем преподавателя и кабинет
-                clean_teacher, room = process_teacher_and_room(teacher_raw)
+                
+                # Логика определения предмета и преподавателя:
+                subject = ''
+                teacher = ''
+                room = ''
+                
+                # Проверяем, есть ли в текущей строке и предмет и преподаватель
+                subject, teacher_from_subject = process_subject_and_teacher(current_value)
+                
+                if teacher_from_subject:
+                    teacher = teacher_from_subject
+                    # Проверяем следующую ячейку на наличие кабинета
+                    _, room = process_teacher_and_room(next_value)
+                else:
+                    # Если в строке только предмет, проверяем следующую на преподавателя
+                    teacher_part, room_part = process_teacher_and_room(next_value)
+                    if teacher_part:
+                        teacher = teacher_part
+                    if room_part:
+                        room = room_part
+                
+                # Если текущее значение похоже на предмет (содержит точки, цифры или длинное)
+                if any(c in current_value for c in ['.', '-']) or len(current_value.split()) > 1:
+                    subject = current_value
+                    # Следующее значение - преподаватель или кабинет
+                    if next_value:
+                        teacher_part, room_part = process_teacher_and_room(next_value)
+                        teacher = teacher_part
+                        room = room_part
+                else:
+                    # Текущее значение может быть преподавателем
+                    teacher_part, room_part = process_teacher_and_room(current_value)
+                    if teacher_part:  # Если это преподаватель
+                        # Ищем предмет в предыдущей строке
+                        if idx > 0:
+                            prev_value = str(df.iloc[idx-1].get(group_col, '')).strip()
+                            if prev_value and prev_value.lower() != 'nan':
+                                subject = prev_value
+                        teacher = teacher_part
+                    else:  # Если это не преподаватель
+                        subject = current_value
+                    
+                    # Проверяем следующее значение
+                    if next_value:
+                        next_teacher, next_room = process_teacher_and_room(next_value)
+                        if next_teacher and not teacher:
+                            teacher = next_teacher
+                        if next_room and not room:
+                            room = next_room
 
                 # Определяем время начала и конца пары
-                # Выбор словаря времени по дню недели
                 if current_day == 'Понедельник':
                     times_dict = LESSON_TIMES
                 elif current_day == 'Суббота':
@@ -189,11 +294,13 @@ def fetch_schedule():
                     'lesson_number': lesson_counter,
                     'time': time,
                     'subject': subject,
-                    'teacher': clean_teacher if clean_teacher and clean_teacher.lower() != 'nan' else '',
+                    'teacher': teacher,
                     'room': room,
                     'start_time': start_time,
                     'end_time': end_time,
-                    'is_practice': False
+                    'week_number': current_week,
+                    'is_practice': False,
+                    'file_hash': file_hash
                 }
                 current_schedule.append(lesson_dict)
 
@@ -316,14 +423,14 @@ def format_day_schedule(group_lessons, day, date_str=None, replacements=None, la
             continue
         # Время пары
         time_str = times_dict.get(time, time)
-        # Формат кабинета: "318-4" -> "Каб. 318-4"
-        room_str = f"Каб. {room}" if room else ""
-        # Вывод пары
-        lines.append(f"{idx} {subject} | {time_str}")
+        # Формируем строку пары
+        lesson_str = f"{idx}️⃣ {subject} | {time_str}"
+        lines.append(lesson_str)
+        
         if teacher:
             lines.append(f"👤 {teacher}")
-        if room_str:
-            lines.append(f"🚪 {room_str}")
+        if room:
+            lines.append(f"🚪 {room}")
         lines.append("")
 
     # Замены
