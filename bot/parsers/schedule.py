@@ -258,162 +258,127 @@ def fetch_schedule():
 
         for group_col in group_cols:
             schedule_data[group_col] = {}
-
             if group_col in practice_data:
                 schedule_data[group_col] = {'practice': [{'is_practice': True, 'practice_info': practice_data[group_col]}]}
                 continue
-                
             print(f"\nОбработка группы {group_col}...")
-
             day_col = df.columns[0]
+            cabinet_col = df.columns[df.columns.get_loc(group_col) + 1]
             current_day = None
             current_schedule = []
             lesson_counter = 0
-
+            week_lessons = {1: [], 2: []}
             for idx, row in df.iterrows():
                 if idx >= practice_start if len(practice_rows) > 0 else False:
                     break
-
                 # Новый день недели
                 if pd.notna(row[day_col]) and str(row[day_col]).strip():
-                    if current_day and current_schedule:
+                    if current_day and (week_lessons[1] or week_lessons[2]):
                         if current_day not in schedule_data[group_col]:
                             schedule_data[group_col][current_day] = []
-                        schedule_data[group_col][current_day].extend(current_schedule)
+                        schedule_data[group_col][current_day].extend(week_lessons[1])
+                        schedule_data[group_col][current_day].extend(week_lessons[2])
                     current_day = str(row[day_col]).strip()
-                    current_schedule = []
+                    week_lessons = {1: [], 2: []}
                     lesson_counter = 0
-
                 time = str(row.get('Интервал', '')).strip()
-                current_value = str(row.get(group_col, '')).strip()
-                next_col = df.columns[df.columns.get_loc(group_col) + 1]
-                next_value = str(row.get(next_col, '')).strip()
-                
-                # Проверяем день недели
-                if pd.notna(row[day_col]) and str(row[day_col]).strip():
-                    # Обновляем текущий день и сохраняем предыдущий день
-                    if current_day and current_schedule:
-                        if current_day not in schedule_data[group_col]:
-                            schedule_data[group_col][current_day] = []
-                        schedule_data[group_col][current_day].extend(current_schedule)
-                    current_day = str(row[day_col]).strip()
-                    current_schedule = []
-                    lesson_counter = 0
-                    current_week = 1  # Сброс недели при новом дне
-
-                # Проверяем разделение на недели
-                # Разделительная линия определяется по пустому интервалу и наличию значения в колонке группы
-                is_divider = pd.isna(row.get('Интервал')) and pd.notna(row.get(group_col))
-                has_next_row = idx + 1 < len(df)
-                
-                if is_divider and has_next_row and current_day:  # Проверяем, что текущий день определен
-                    next_row = df.iloc[idx + 1]
-                    # Если следующая строка тоже содержит предмет, это разделение недель
-                    if pd.notna(next_row.get(group_col)):
-                        print(f"Найдено разделение недель для группы {group_col} в {current_day}")
-                        current_week = 2  # Текущая пара относится ко второй неделе
+                cell_value = str(row.get(group_col, '')).strip()
+                cabinet_value = str(row.get(cabinet_col, '')).strip()
+                # Пропуск пустых строк
+                if not time or cell_value.lower() == 'nan':
                     continue
-                
-                # Пропускаем пустые строки и строки без времени
-                if not time or (not current_value and not next_value) or current_value.lower() == 'nan':
-                    continue
-
                 # Определяем номер пары
-                # Проверяем, что это действительно номер пары, а не заголовок
                 if time and not any(x in time.lower() for x in ['снимаются', 'проводятся']):
                     lesson_counter += 1
                 else:
                     continue
-                
-                # Логика определения предмета и преподавателя:
-                subject = ''
-                teacher = ''
-                room = ''
-                
-                # Проверяем, есть ли в текущей строке и предмет и преподаватель
-                subject, teacher_from_subject = process_subject_and_teacher(current_value)
-                
-                if teacher_from_subject:
-                    teacher = teacher_from_subject
-                    # Проверяем следующую ячейку на наличие кабинета
-                    _, room = process_teacher_and_room(next_value)
-                else:
-                    # Если в строке только предмет, проверяем следующую на преподавателя
-                    teacher_part, room_part = process_teacher_and_room(next_value)
-                    if teacher_part:
-                        teacher = teacher_part
-                    if room_part:
-                        room = room_part
-                
-                # Если текущее значение похоже на предмет (содержит точки, цифры или длинное)
-                if any(c in current_value for c in ['.', '-']) or len(current_value.split()) > 1:
-                    subject = current_value
-                    # Следующее значение - преподаватель или кабинет
-                    if next_value:
-                        teacher_part, room_part = process_teacher_and_room(next_value)
-                        teacher = teacher_part
-                        room = room_part
-                else:
-                    # Текущее значение может быть преподавателем
-                    teacher_part, room_part = process_teacher_and_room(current_value)
-                    if teacher_part:  # Если это преподаватель
-                        # Ищем предмет в предыдущей строке
-                        if idx > 0:
-                            prev_value = str(df.iloc[idx-1].get(group_col, '')).strip()
-                            if prev_value and prev_value.lower() != 'nan':
-                                subject = prev_value
-                        teacher = teacher_part
-                    else:  # Если это не преподаватель
-                        subject = current_value
-                    
-                    # Проверяем следующее значение
-                    if next_value:
-                        next_teacher, next_room = process_teacher_and_room(next_value)
-                        if next_teacher and not teacher:
-                            teacher = next_teacher
-                        if next_room and not room:
-                            room = next_room
-
-                # Определяем время начала и конца пары
-                if current_day == 'Понедельник':
-                    times_dict = LESSON_TIMES
-                elif current_day == 'Суббота':
-                    times_dict = SATURDAY_TIMES
-                else:
-                    times_dict = WEEKDAY_TIMES
-                time_range = times_dict.get(time, '')
-                if time_range and '-' in time_range:
-                    start_time, end_time = [t.strip() for t in time_range.split('-')]
-                else:
-                    start_time, end_time = '', ''
-
+                # Обработка недель и "-----"
+                if cell_value == "-----":
+                    # Пара только на одну неделю, ищем следующую строку
+                    continue
+                # Проверка на подгруппы (две фамилии через /)
+                if '/' in cell_value:
+                    # Предмет и два препода, делим на подгруппы
+                    subject = None
+                    teachers = [t.strip() for t in cell_value.split('/')]
+                    cabinets = [c.strip() for c in cabinet_value.split('/')]
+                    for i, teacher in enumerate(teachers):
+                        lesson_dict = {
+                            'lesson_number': lesson_counter,
+                            'time': time,
+                            'subject': subject if subject else '',
+                            'teacher': teacher,
+                            'room': cabinets[i] if i < len(cabinets) else cabinet_value,
+                            'week_number': 1,
+                            'is_subgroup': True,
+                            'subgroup': i+1,
+                            'file_hash': file_hash
+                        }
+                        week_lessons[1].append(lesson_dict)
+                    continue
+                # Обычная пара
+                subject = cell_value
+                teacher = None
+                # Следующая строка — преподаватель
+                if idx+1 < len(df):
+                    next_value = str(df.iloc[idx+1].get(group_col, '')).strip()
+                    if next_value and next_value != "-----":
+                        teacher = next_value
+                        # Проверка на подгруппы в ФИО
+                        if '/' in teacher:
+                            teachers = [t.strip() for t in teacher.split('/')]
+                            cabinets = [c.strip() for c in cabinet_value.split('/')]
+                            for i, teacher_item in enumerate(teachers):
+                                lesson_dict = {
+                                    'lesson_number': lesson_counter,
+                                    'time': time,
+                                    'subject': subject,
+                                    'teacher': teacher_item,
+                                    'room': cabinets[i] if i < len(cabinets) else cabinet_value,
+                                    'week_number': 1,
+                                    'is_subgroup': True,
+                                    'subgroup': i+1,
+                                    'file_hash': file_hash
+                                }
+                                week_lessons[1].append(lesson_dict)
+                            continue
+                        # Физкультура — особый случай
+                        if teacher.lower() in ['каверзнева', 'видякова']:
+                            room = 'Общежитие'
+                        else:
+                            room = cabinet_value
+                        lesson_dict = {
+                            'lesson_number': lesson_counter,
+                            'time': time,
+                            'subject': subject,
+                            'teacher': teacher,
+                            'room': room,
+                            'week_number': 1,
+                            'is_subgroup': False,
+                            'file_hash': file_hash
+                        }
+                        week_lessons[1].append(lesson_dict)
+                        continue
+                # Если нет преподавателя — просто предмет и кабинет
                 lesson_dict = {
                     'lesson_number': lesson_counter,
                     'time': time,
                     'subject': subject,
-                    'teacher': teacher,
-                    'room': room,
-                    'start_time': start_time,
-                    'end_time': end_time,
-                    'week_number': current_week,
-                    'is_practice': False,
+                    'teacher': '',
+                    'room': cabinet_value,
+                    'week_number': 1,
+                    'is_subgroup': False,
                     'file_hash': file_hash
                 }
-                
-                print(f"Добавлена пара для {group_col} ({current_day}, неделя {current_week}):")
-                print(f"Предмет: {subject}")
-                print(f"Преподаватель: {teacher}")
-                print(f"Кабинет: {room}")
-                print("---")
-                current_schedule.append(lesson_dict)
-
+                week_lessons[1].append(lesson_dict)
             # Добавляем последний день
-            if current_day and current_schedule:
+            if current_day and (week_lessons[1] or week_lessons[2]):
                 if not isinstance(schedule_data[group_col], dict):
                     schedule_data[group_col] = {}
                 if current_day not in schedule_data[group_col]:
                     schedule_data[group_col][current_day] = []
-                schedule_data[group_col][current_day].extend(current_schedule)
+                schedule_data[group_col][current_day].extend(week_lessons[1])
+                schedule_data[group_col][current_day].extend(week_lessons[2])
         print("schedule_data.keys():", list(schedule_data.keys()))
         return schedule_data
     except Exception as e:
