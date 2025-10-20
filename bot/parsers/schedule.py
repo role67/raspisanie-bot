@@ -173,11 +173,12 @@ def extract_groups_from_schedule():
 
 # Для теста:
 
-def format_day_schedule(group_lessons, day, replacements=None, last_update=None):
+def format_day_schedule(group_lessons, day, date_str=None, replacements=None, last_update=None):
     """
     Форматирует расписание для одного дня с заменами и временем обновления.
     group_lessons: словарь с расписанием по дням недели
     day: день недели ('Понедельник', ...)
+    date_str: строка с датой в формате dd.mm.yyyy
     replacements: список замен для этого дня (если есть)
     last_update: datetime
     """
@@ -201,9 +202,15 @@ def format_day_schedule(group_lessons, day, replacements=None, last_update=None)
     else:
         times_dict = WEEKDAY_TIMES
 
-    # Заголовок
-    today = datetime.now()
-    lines = [f"📅 {today.strftime('%d.%m.%Y')} | {day_map.get(day, day)}  \n"]
+    # Заголовок с датой
+    if date_str:
+        lines = [f"📅 {date_str} | {day_map.get(day, day)}\n"]
+    else:
+        lines = [f"📅 {day_map.get(day, day)}\n"]
+        
+    # Проверяем наличие расписания
+    if not group_lessons or day not in group_lessons:
+        lines.append("\n❌ Расписание на этот день не найдено")
 
     lessons = group_lessons.get(day, [])
     for idx, lesson in enumerate(lessons, 1):
