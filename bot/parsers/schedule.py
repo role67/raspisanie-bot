@@ -19,26 +19,55 @@ def fetch_schedule():
             print(f"Ошибка чтения xls: {e}")
             print(f"Размер файла: {len(resp.content)} байт")
             return {}
+            
+        # Проверяем есть ли строка "ПРАКТИКИ"
+        practice_rows = df[df.iloc[:, 0] == "ПРАКТИКИ"].index
+        practice_data = {}
+        
+        if len(practice_rows) > 0:
+            practice_start = practice_rows[0]
+            # Читаем практики после строки "ПРАКТИКИ"
+            for idx, row in df.iloc[practice_start+1:].iterrows():
+                if pd.notna(row[0]) and str(row[0]).strip():
+                    group = str(row[0]).strip()
+                    practice_info = str(row[2]).strip() if len(row) > 2 and pd.notna(row[2]) else ""
+                    if group and practice_info and group != "ПРАКТИКИ":
+                        practice_data[group] = practice_info
+        
         print("df.head():", df.head())
         print("df.columns:", df.columns)
+        
         # Заполняем пропуски времени (интервала)
         if 'Интервал' in df.columns:
             df['Интервал'] = df['Интервал'].fillna(method='ffill')
+            
         schedule_data = {}
         # Группы идут через один столбец: [Группа, Unnamed, Группа, Unnamed, ...]
         group_cols = [col for col in df.columns if '-' in str(col)]
+        
         for group_col in group_cols:
             schedule_data[group_col] = []
+            
+            # Проверяем, не на практике ли группа
+            if group_col in practice_data:
+                schedule_data[group_col] = [{'is_practice': True, 'practice_info': practice_data[group_col]}]
+                continue
+                
             # Индекс преподавателя и кабинета
             subj_idx = df.columns.get_loc(group_col)
             teacher_idx = subj_idx + 1
             room_idx = subj_idx + 2
+            
             for idx, row in df.iterrows():
+                if idx >= practice_start if len(practice_rows) > 0 else False:
+                    break
+                    
                 lesson_number = idx + 1
                 time = row.get('Интервал', '')
                 subject = row.get(group_col, '')
                 teacher = row.get(df.columns[teacher_idx], '') if teacher_idx < len(df.columns) else ''
                 room = row.get(df.columns[room_idx], '') if room_idx < len(df.columns) else ''
+                
                 # Пропускаем пустые строки
                 if pd.notna(subject) and str(subject).strip() and str(subject).strip().lower() != 'nan':
                     schedule_data[group_col].append({
@@ -46,7 +75,8 @@ def fetch_schedule():
                         'time': str(time).strip(),
                         'subject': str(subject).strip(),
                         'teacher': str(teacher).strip(),
-                        'room': str(room).strip()
+                        'room': str(room).strip(),
+                        'is_practice': False
                     })
         print("schedule_data.keys():", list(schedule_data.keys()))
         return schedule_data
@@ -115,11 +145,20 @@ def format_schedule_for_group(group_lessons):
     Форматирует расписание для группы в красивый текст для Telegram.
     group_lessons: список занятий (dict с ключами lesson_number, time, subject, teacher, room)
     """
-    from .lesson_times import LESSON_TIMES
+    from .lesson_times import LESSON_TIMES, get_schedule_string
+    from datetime import datetime
     
     if not group_lessons:
-        return "Расписание не найдено."
+        return "❌ Расписание не найдено."
         
+    # Проверяем, не на практике ли группа
+    if len(group_lessons) == 1 and group_lessons[0].get('is_practice', False):
+        practice_info = group_lessons[0].get('practice_info', '')
+        return f"⚡️ ГРУППА НА ПРАКТИКЕ ⚡️\n\n📝 {practice_info}"
+        
+    weekday = datetime.now().weekday()
+    schedule_header = get_schedule_string(weekday)
+    
     # Сгруппируем пары по номерам
     lessons_by_number = {}
     for lesson in group_lessons:
@@ -128,8 +167,12 @@ def format_schedule_for_group(group_lessons):
             lessons_by_number[time] = []
         lessons_by_number[time].append(lesson)
     
-    lines = []
+    lines = [schedule_header, "\n", "📅 РАСПИСАНИЕ ЗАНЯТИЙ\n"]
+    
     for time, lessons in sorted(lessons_by_number.items()):
+        if not time:
+            continue
+            
         lesson_num = time.split()[0]  # Получаем номер пары из "1 пара"
         lines.append(f"{'_' * 7} Занятие №{lesson_num} {'_' * 7}")
         lines.append(f"         ⏰«{LESSON_TIMES.get(time, 'Время не указано')}»\n")
