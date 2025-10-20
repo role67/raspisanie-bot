@@ -193,19 +193,37 @@ async def get_or_create_teacher(pool, teacher_name):
 
 async def store_schedule(pool, schedule_data):
     """Сохраняет расписание в БД"""
+    if not schedule_data:
+        print("Нет данных для сохранения")
+        return
+        
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Получаем хеш файла
-            file_hash = next(iter(next(iter(schedule_data.values())).values()))[0].get('file_hash')
-            
-            # Проверяем изменения
-            existing_hash = await conn.fetchval("SELECT file_hash FROM schedule LIMIT 1")
-            if existing_hash == file_hash:
-                print("Расписание не изменилось")
-                return
+            try:
+                # Получаем хеш файла из данных
+                first_group = next(iter(schedule_data))
+                first_day = next(iter(schedule_data[first_group]))
+                first_lesson = schedule_data[first_group][first_day][0]
+                file_hash = first_lesson.get('file_hash', '')
+                
+                if not file_hash:
+                    print("Ошибка: отсутствует хеш файла")
+                    return
+                
+                # Проверяем изменения
+                existing_hash = await conn.fetchval("SELECT file_hash FROM schedule LIMIT 1")
+                if existing_hash == file_hash:
+                    print("Расписание не изменилось")
+                    return
 
-            # Очищаем старое расписание
-            await conn.execute("DELETE FROM schedule")
+                # Очищаем старое расписание
+                await conn.execute("DELETE FROM schedule")
+
+                print("Начинаем сохранение расписания в БД...")
+                
+            except Exception as e:
+                print(f"Ошибка при подготовке к сохранению расписания: {e}")
+                raise
             
             # Обрабатываем данные
             for group, days in schedule_data.items():
