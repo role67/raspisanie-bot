@@ -317,6 +317,7 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
         schedule_text = format_day_schedule(
             schedule_data.get(group, {}),
             day,
+            date_str=date_str,
             replacements=replacements,
             last_update=last_update
         )
@@ -346,12 +347,9 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
     elif view_type == "tomorrow":
         builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
         builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
-    else:
+    else:  # week
         builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
         builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
-    builder.row()
-    builder.button(text="🔄 Обновить", callback_data=f"schedule_{group}_{view_type}")
-    builder.button(text="📚 Другая группа", callback_data="show_groups")
 
     await callback.message.edit_text(
         schedule_text,
