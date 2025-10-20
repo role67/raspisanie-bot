@@ -218,35 +218,58 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, db=
 
 from .parsers.schedule import fetch_schedule, fetch_replacements, format_day_schedule
 
-async def get_schedule_text(group: str) -> str:
-    """Формирует текст расписания для группы (без замен)"""
-    from .parsers.lesson_times import LESSON_TIMES
+async def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons: list = None, last_update=None) -> str:
+    """Формирует текст расписания для группы (без замен), формат с эмодзи и правильным порядком"""
+    from .parsers.lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
+    from datetime import datetime
     schedule_data = fetch_schedule()
     if group not in schedule_data:
         return "❌ Расписание для группы не найдено"
-    text = f"📅 Расписание для группы {group}:\n\n"
-    lessons_by_number = {}
-    for lesson in schedule_data[group]:
-        time = lesson['time']
-        if time not in lessons_by_number:
-            lessons_by_number[time] = []
-        lessons_by_number[time].append(lesson)
-    for time, lessons in lessons_by_number.items():
-        text += f"{'_' * 7} Занятие №{time[0]} {'_' * 7}\n"
-        text += f"         ⏰«{LESSON_TIMES.get(time, 'Время не указано')}»\n\n"
-        for lesson in lessons:
-            subject = lesson.get('subject', '').strip()
-            teacher = lesson.get('teacher', '').strip()
-            room = lesson.get('room', '').strip()
-            if subject and subject != "-----":
-                line = f"📚 {subject}"
-                if teacher:
-                    line += f" | {teacher}"
-                if room:
-                    line += f" | Каб. {room}"
-                text += line + "\n"
-        text += "\n"
-    return text
+    # Определяем словарь времени
+    if day == 'Понедельник':
+        times_dict = LESSON_TIMES
+    elif day == 'Суббота':
+        times_dict = SATURDAY_TIMES
+    else:
+        times_dict = WEEKDAY_TIMES
+    # Заголовок
+    if date_str:
+        lines = [f"📅 {date_str} | {day}\n"]
+    else:
+        lines = [f"📅 {day}\n"]
+    lessons = lessons if lessons is not None else schedule_data[group].get(day, [])
+    if not lessons:
+        lines.append("\n❌ Расписание на этот день не найдено")
+    for idx, lesson in enumerate(lessons, 1):
+        subject = lesson.get('subject', '').strip()
+        teacher = lesson.get('teacher', '').strip()
+        room = lesson.get('room', '').strip()
+        time = lesson.get('time', '').strip()
+        if not subject or subject == "-----":
+            continue
+        # Время пары
+        time_str = times_dict.get(time, time)
+        # Формат кабинета
+        if subject.lower().startswith('физ') and teacher and teacher.lower().startswith('видяков'):
+            room_str = "Общежитие"
+        elif room and room.lower() in ['общ', 'общ.', 'общага']:
+            room_str = "Общежитие"
+        elif room:
+            room_str = f"Каб. {room}"
+        else:
+            room_str = ""
+        # Эмодзи для номера пары
+        num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+        num = num_emoji[idx-1] if idx <= len(num_emoji) else f"{idx}"
+        lines.append(f"{num} {subject} | {time_str}")
+        if teacher:
+            lines.append(f"👤 {teacher}")
+        if room_str:
+            lines.append(f"🚪 {room_str}")
+        lines.append("")
+    if last_update:
+        lines.append(f"� Обновлено: {last_update.strftime('%d.%m.%Y %H:%M')}")
+    return '\n'.join(lines)
 
 @router.callback_query(F.data.startswith("group_"))
 async def choose_group(callback: types.CallbackQuery, state: FSMContext, db=None):
@@ -313,7 +336,6 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
     await callback.answer("⏳ Загружаю расписание...")
 
     schedule_data = fetch_schedule()
-    replacements_data = fetch_replacements()
     today = datetime.now()
     tomorrow = today + timedelta(days=1)
     weekday_map = {
@@ -326,66 +348,52 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
         6: 'Воскресенье'
     }
 
-    # Определяем день для отображения
     if view_type == "today":
         day = weekday_map[today.weekday()]
         if today.weekday() == 6:
             day = "Понедельник"
         date_str = today.strftime('%d.%m.%Y')
+        lessons = schedule_data.get(group, {}).get(day, [])
+        last_update = today
+        if pool:
+            async with pool.acquire() as conn:
+                update_time = await conn.fetchval(
+                    "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
+                )
+                if update_time:
+                    last_update = update_time
+        schedule_text = get_schedule_text(group, day, date_str, lessons, last_update)
     elif view_type == "tomorrow":
         day = weekday_map[tomorrow.weekday()]
         if tomorrow.weekday() == 6:
             day = "Понедельник"
         date_str = tomorrow.strftime('%d.%m.%Y')
+        lessons = schedule_data.get(group, {}).get(day, [])
+        last_update = today
+        if pool:
+            async with pool.acquire() as conn:
+                update_time = await conn.fetchval(
+                    "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
+                )
+                if update_time:
+                    last_update = update_time
+        schedule_text = get_schedule_text(group, day, date_str, lessons, last_update)
     else:
-        day = None
-        date_str = None
-
-    # Получаем время последнего обновления
-    last_update = today
-    if pool:
-        async with pool.acquire() as conn:
-            update_time = await conn.fetchval(
-                "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
-            )
-            if update_time:
-                last_update = update_time
-
-    # Формируем текст расписания
-    if day:
-        # Получаем замены для дня (по дате)
-        replacements = []
-        if group in replacements_data:
-            # ищем замены по дате (строгое совпадение)
-            for date, reps in replacements_data[group].items():
-                if date_str and date_str in date:
-                    replacements.extend(reps)
-        schedule_text = format_day_schedule(
-            schedule_data.get(group, {}),
-            day,
-            date_str=date_str,
-            replacements=replacements,
-            last_update=last_update
-        )
-    else:
-        # Неделя: выводим все дни подряд
         week_days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
         texts = []
+        last_update = today
+        if pool:
+            async with pool.acquire() as conn:
+                update_time = await conn.fetchval(
+                    "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
+                )
+                if update_time:
+                    last_update = update_time
         for d in week_days:
-            replacements = []
-            if group in replacements_data:
-                for date, reps in replacements_data[group].items():
-                    if d in date:
-                        replacements.extend(reps)
-            texts.append(format_day_schedule(
-                schedule_data.get(group, {}),
-                d,
-                replacements=replacements,
-                last_update=last_update
-            ))
+            lessons = schedule_data.get(group, {}).get(d, [])
+            texts.append(get_schedule_text(group, d, None, lessons, last_update))
         schedule_text = '\n'.join(texts)
 
-    # Клавиатура навигации
     builder = InlineKeyboardBuilder()
     if view_type == "today":
         builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
@@ -393,7 +401,7 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
     elif view_type == "tomorrow":
         builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
         builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
-    else:  # week
+    else:
         builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
         builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
 
