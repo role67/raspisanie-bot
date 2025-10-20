@@ -247,18 +247,13 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
         time = lesson.get('time', '').strip()
         if not subject or subject == "-----":
             continue
-        # Время пары
         time_str = times_dict.get(time, time)
-        # Формат кабинета
-        if subject.lower().startswith('физ') and teacher and teacher.lower().startswith('видяков'):
-            room_str = "Общежитие"
-        elif room and room.lower() in ['общ', 'общ.', 'общага']:
+        if room and room.lower() in ['общ', 'общ.', 'общага', 'общежитие']:
             room_str = "Общежитие"
         elif room:
             room_str = f"Каб. {room}"
         else:
             room_str = ""
-        # Эмодзи для номера пары
         num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
         num = num_emoji[idx-1] if idx <= len(num_emoji) else f"{idx}"
         lines.append(f"{num} {subject} | {time_str}")
@@ -268,7 +263,7 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
             lines.append(f"🚪 {room_str}")
         lines.append("")
     if last_update:
-        lines.append(f"� Обновлено: {last_update.strftime('%d.%m.%Y %H:%M')}")
+        lines.append(f"🕒Обновлено: {last_update.strftime('%d.%m.%Y %H:%M')}")
     return '\n'.join(lines)
 
 @router.callback_query(F.data.startswith("group_"))
