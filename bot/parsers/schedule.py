@@ -122,7 +122,7 @@ def fetch_schedule():
         
         # Заполняем пропуски времени (интервала)
         if 'Интервал' in df.columns:
-            df['Интервал'] = df['Интервал'].fillna(method='ffill')
+            df['Интервал'] = df['Интервал'].ffill()
 
         # Импортируем времена пар
         from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
