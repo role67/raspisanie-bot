@@ -240,22 +240,38 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
     lessons = lessons if lessons is not None else schedule_data[group].get(day, [])
     if not lessons:
         lines.append("\n❌ Расписание на этот день не найдено")
-    for idx, lesson in enumerate(lessons, 1):
+    num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+    for lesson in lessons:
         subject = lesson.get('subject', '').strip()
         teacher = lesson.get('teacher', '').strip()
-        room = lesson.get('room', '').strip()
-        time = lesson.get('time', '').strip()
+        room = lesson.get('room', '').strip() or lesson.get('classroom', '').strip()
+        start_time = lesson.get('start_time', '').strip()
+        end_time = lesson.get('end_time', '').strip()
+        lesson_number = lesson.get('lesson_number')
         if not subject or subject == "-----":
             continue
-        time_str = times_dict.get(time, time)
-        if room and room.lower() in ['общ', 'общ.', 'общага', 'общежитие']:
-            room_str = "Общежитие"
-        elif room:
-            room_str = f"Каб. {room}"
+        # Формируем время пары
+        if start_time and end_time:
+            time_str = f"{start_time} - {end_time}"
         else:
-            room_str = ""
-        num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
-        num = num_emoji[idx-1] if idx <= len(num_emoji) else f"{idx}"
+            # fallback: по times_dict
+            time_key = lesson.get('time', '').strip()
+            time_str = times_dict.get(time_key, time_key)
+        # Формируем номер пары с эмодзи
+        if lesson_number and 1 <= lesson_number <= len(num_emoji):
+            num = num_emoji[lesson_number-1]
+        else:
+            num = str(lesson_number) if lesson_number else ""
+        # Формируем кабинет
+        room_str = ""
+        if room:
+            if any(x in room.lower() for x in ['общ', 'общежитие']):
+                room_str = "Общежитие"
+            elif room.lower().startswith('каб.'):
+                room_str = room
+            else:
+                room_str = f"Каб. {room}"
+        # Формируем строку пары
         lines.append(f"{num} {subject} | {time_str}")
         if teacher:
             lines.append(f"👤 {teacher}")

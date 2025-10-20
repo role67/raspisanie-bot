@@ -123,30 +123,30 @@ def fetch_schedule():
         # Заполняем пропуски времени (интервала)
         if 'Интервал' in df.columns:
             df['Интервал'] = df['Интервал'].fillna(method='ffill')
-            
+
+        # Импортируем времена пар
+        from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
+
         schedule_data = {}
-        # Группы идут через один столбец: [Группа, Unnamed, Группа, Unnamed, ...]
         group_cols = [col for col in df.columns if '-' in str(col)]
-        
+
         for group_col in group_cols:
             schedule_data[group_col] = {}
-            
-            # Проверяем, не на практике ли группа
+
             if group_col in practice_data:
                 schedule_data[group_col] = {'practice': [{'is_practice': True, 'practice_info': practice_data[group_col]}]}
                 continue
-                
-            # Получаем день недели из первой колонки
+
             day_col = df.columns[0]
-            
             current_day = None
             current_schedule = []
-            
+            lesson_counter = 0
+
             for idx, row in df.iterrows():
                 if idx >= practice_start if len(practice_rows) > 0 else False:
                     break
-                
-                # Проверяем, не начался ли новый день
+
+                # Новый день недели
                 if pd.notna(row[day_col]) and str(row[day_col]).strip():
                     if current_day and current_schedule:
                         if current_day not in schedule_data[group_col]:
@@ -154,38 +154,49 @@ def fetch_schedule():
                         schedule_data[group_col][current_day].extend(current_schedule)
                     current_day = str(row[day_col]).strip()
                     current_schedule = []
-                    
+                    lesson_counter = 0
+
                 time = str(row.get('Интервал', '')).strip()
                 subject = str(row.get(group_col, '')).strip()
-                
-                # Получаем следующий столбец для преподавателя
                 next_col = df.columns[df.columns.get_loc(group_col) + 1]
-                teacher = str(row.get(next_col, '')).strip()
-                
-                # Пропускаем строки без времени или предмета
+                teacher_raw = str(row.get(next_col, '')).strip()
+
+                # Пропуск строк без времени или предмета
                 if not time or not subject or subject.lower() == 'nan':
                     continue
-                
-                # Разделяем учителя и кабинет
-                clean_teacher, room = process_teacher_and_room(teacher)
-                
-                if subject and subject != "-----":
-                    # Форматируем кабинет
-                    formatted_room = room
-                    if room:
-                        if room.lower() in ['общ', 'общ.', 'общага']:
-                            formatted_room = 'Общежитие'
-                        elif '-' in room or room.isdigit():
-                            formatted_room = f"Каб. {room}"
-                            
-                    current_schedule.append({
-                        'time': time,
-                        'subject': subject,
-                        'teacher': clean_teacher if clean_teacher and clean_teacher.lower() != 'nan' else '',
-                        'room': formatted_room,
-                        'is_practice': False
-                    })
-            
+
+                # Определяем номер пары (по порядку в дне)
+                lesson_counter += 1
+
+                # Разделяем преподавателя и кабинет
+                clean_teacher, room = process_teacher_and_room(teacher_raw)
+
+                # Определяем время начала и конца пары
+                # Выбор словаря времени по дню недели
+                if current_day == 'Понедельник':
+                    times_dict = LESSON_TIMES
+                elif current_day == 'Суббота':
+                    times_dict = SATURDAY_TIMES
+                else:
+                    times_dict = WEEKDAY_TIMES
+                time_range = times_dict.get(time, '')
+                if time_range and '-' in time_range:
+                    start_time, end_time = [t.strip() for t in time_range.split('-')]
+                else:
+                    start_time, end_time = '', ''
+
+                lesson_dict = {
+                    'lesson_number': lesson_counter,
+                    'time': time,
+                    'subject': subject,
+                    'teacher': clean_teacher if clean_teacher and clean_teacher.lower() != 'nan' else '',
+                    'room': room,
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'is_practice': False
+                }
+                current_schedule.append(lesson_dict)
+
             # Добавляем последний день
             if current_day and current_schedule:
                 if not isinstance(schedule_data[group_col], dict):
