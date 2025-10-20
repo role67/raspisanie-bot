@@ -1,3 +1,4 @@
+
 import pandas as pd
 import requests
 from io import BytesIO
@@ -5,6 +6,7 @@ from docx import Document
 import random
 import os
 from pathlib import Path
+import threading
 
 SCHEDULE_URL = "https://www.nkptiu.ru/doc/raspisanie/raspisanie.xls"
 REPLACEMENTS_URL = "https://www.nkptiu.ru/doc/raspisanie/zameni.docx"
@@ -30,8 +32,14 @@ def load_user_agents():
     
     return agents
 
+
 # Загружаем User-Agent'ы при импорте модуля
 USER_AGENTS = load_user_agents()
+
+# Глобальный кэш расписания и блокировка
+_schedule_cache = None
+_schedule_cache_lock = threading.Lock()
+_schedule_cache_hash = None
 
 def get_random_headers():
     """Возвращает случайный User-Agent и базовые заголовки"""
@@ -146,76 +154,30 @@ def process_teacher_and_room(value):
 
 def fetch_schedule():
     """Получает и парсит основное расписание"""
-    try:
+    global _schedule_cache, _schedule_cache_lock, _schedule_cache_hash
+    with _schedule_cache_lock:
         try:
             headers = get_random_headers()
             resp = requests.get(SCHEDULE_URL, headers=headers, timeout=30)
             resp.raise_for_status()
-            
-            print(f"Получен ответ: {resp.status_code}, размер: {len(resp.content)} байт")
-            
-            if resp.status_code != 200:
-                print(f"Неверный статус ответа: {resp.status_code}")
+            if resp.status_code != 200 or len(resp.content) < 1000:
                 return {}
-                
-            if len(resp.content) < 1000:  # Файл слишком маленький
-                print("Подозрительно маленький размер файла")
-                return {}
-                
+            file_hash = hash(resp.content)
+            if _schedule_cache is not None and _schedule_cache_hash == file_hash:
+                return _schedule_cache
             xls = BytesIO(resp.content)
-        except requests.exceptions.RequestException as e:
-            print(f"Ошибка при получении файла расписания: {e}")
+        except Exception:
             return {}
-        
-        if not resp.content:
-            print("Получен пустой файл расписания")
-            return {}
-            
-        # Сохраняем хеш файла для отслеживания изменений
-        file_hash = hash(resp.content)
-        
-        # По умолчанию начинаем с первой недели
-        current_week = 1
-        
         try:
-            # Попробуем оба движка Excel
             try:
-                print("Пробуем xlrd движок...")
                 df = pd.read_excel(xls, engine='xlrd', na_values=[''])
             except:
-                print("xlrd не сработал, пробуем openpyxl...")
-                xls.seek(0)  # Сбрасываем позицию в начало файла
+                xls.seek(0)
                 df = pd.read_excel(xls, engine='openpyxl', na_values=[''])
-            
-            print("Размер DataFrame:", df.shape)
-            
-            if df.empty:
-                print("Файл расписания не содержит данных")
+            if df.empty or len(df.columns) < 3:
                 return {}
-                
-            # Проверяем структуру данных
-            if len(df.columns) < 3:
-                print("Неверная структура файла (мало колонок)")
-                return {}
-                
-            # Выводим первые строки для отладки
-            print("\nПервые строки:")
-            print(df.head())
-            print("\nКолонки:")
-            print(df.columns.tolist())
-            
-        except pd.errors.EmptyDataError:
-            print("Файл расписания пуст")
+        except Exception:
             return {}
-        except pd.errors.ParserError as e:
-            print(f"Ошибка парсинга файла Excel: {e}")
-            return {}
-        except Exception as e:
-            print(f"Неожиданная ошибка при чтении Excel: {e}")
-            print(f"Размер файла: {len(resp.content)} байт")
-            return {}
-            
-        # Проверяем есть ли строка "ПРАКТИКИ"
         practice_rows = df[df.iloc[:, 0] == "ПРАКТИКИ"].index
         practice_data = {}
         
@@ -368,10 +330,11 @@ def fetch_schedule():
                     schedule_data[group_col][current_day] = []
                 schedule_data[group_col][current_day].extend(week_lessons[1])
                 schedule_data[group_col][current_day].extend(week_lessons[2])
-        print("schedule_data.keys():", list(schedule_data.keys()))
+        _schedule_cache = schedule_data
+        _schedule_cache_hash = file_hash
         return schedule_data
     except Exception as e:
-        print(f"Ошибка при получении расписания: {e}")
+        print(f"Error in fetch_schedule: {e}")
         return {}
 
 def fetch_replacements():
@@ -659,20 +622,17 @@ def format_day_schedule(group_lessons, day, date_str=None, replacements=None, la
                 print(f"Ошибка при обработке урока #{idx}: {e}")
                 continue
                 
-    except Exception as e:
-        print(f"Ошибка при форматировании расписания: {e}")
-        return "❌ Ошибка при формировании расписания"
-        # Время пары
-        time_str = times_dict.get(time, time)
-        # Формируем строку пары
-        lesson_str = f"{idx}️⃣ {subject} | {time_str}"
-        lines.append(lesson_str)
-        
-        if teacher:
-            lines.append(f"👤 {teacher}")
-        if room:
-            lines.append(f"🚪 {room}")
-        lines.append("")
+    # Время пары
+    time_str = times_dict.get(time, time)
+    # Формируем строку пары
+    lesson_str = f"{idx}️⃣ {subject} | {time_str}"
+    lines.append(lesson_str)
+    
+    if teacher:
+        lines.append(f"👤 {teacher}")
+    if room:
+        lines.append(f"🚪 {room}")
+    lines.append("")
 
     # Замены
     try:
