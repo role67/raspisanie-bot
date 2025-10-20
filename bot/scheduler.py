@@ -12,21 +12,26 @@ async def update_data(pool):
         replacements = fetch_replacements()
         
         async with pool.acquire() as conn:
-            # Начинаем транзакцию
             async with conn.transaction():
-                # Очищаем старые данные
                 await conn.execute("DELETE FROM schedule")
                 await conn.execute("DELETE FROM replacements")
-                
                 # Вставляем новое расписание
                 if schedule:
-                    for group, lessons in schedule.items():
-                        for lesson in lessons:
-                            await conn.execute("""
-                                INSERT INTO schedule (group_name, lesson_number, subject, time)
-                                VALUES ($1, $2, $3, $4)
-                            """, group, lesson.get('lesson_number'), lesson.get('subject'), lesson.get('time'))
-                
+                    for group, days in schedule.items():
+                        if isinstance(days, dict):
+                            for day, lessons in days.items():
+                                for lesson in lessons:
+                                    await conn.execute("""
+                                        INSERT INTO schedule (group_name, lesson_number, subject, time)
+                                        VALUES ($1, $2, $3, $4)
+                                    """, group, lesson.get('lesson_number'), lesson.get('subject'), lesson.get('time'))
+                        elif isinstance(days, list):
+                            # Для практик
+                            for lesson in days:
+                                await conn.execute("""
+                                    INSERT INTO schedule (group_name, lesson_number, subject, time)
+                                    VALUES ($1, $2, $3, $4)
+                                """, group, lesson.get('lesson_number'), lesson.get('subject'), lesson.get('time'))
                 # Вставляем замены
                 if replacements:
                     for group, dates in replacements.items():
@@ -36,13 +41,10 @@ async def update_data(pool):
                                     INSERT INTO replacements (date, group_name, lesson_number, new_subject, classroom)
                                     VALUES ($1, $2, $3, $4, $5)
                                 """, date, group, change.get('lesson'), change.get('subject'), change.get('room'))
-                                
-                # Записываем время обновления
                 await conn.execute("""
                     INSERT INTO schedule_updates (update_type)
                     VALUES ('schedule')
                 """)
-        
         logging.info('Данные успешно обновлены')
     except Exception as e:
         logging.error(f'Ошибка при обновлении данных: {e}')
