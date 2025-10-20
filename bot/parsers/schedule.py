@@ -147,6 +147,9 @@ def fetch_schedule():
         # Сохраняем хеш файла для отслеживания изменений
         file_hash = hash(resp.content)
         
+        # По умолчанию начинаем с первой недели
+        current_week = 1
+        
         try:
             # Читаем файл с сохранением форматирования
             df = pd.read_excel(xls, engine='xlrd', na_values=[''])
@@ -213,12 +216,17 @@ def fetch_schedule():
                 next_col = df.columns[df.columns.get_loc(group_col) + 1]
                 next_value = str(row.get(next_col, '')).strip()
                 
-                # Проверяем наличие разделительной линии (пустая строка между парами)
-                is_divider = pd.isna(row.get('Интервал')) and pd.isna(row.get(group_col))
+                # Проверяем разделение на недели
+                # Разделительная линия определяется по пустому интервалу и наличию значения в колонке группы
+                is_divider = pd.isna(row.get('Интервал')) and pd.notna(row.get(group_col))
+                has_next_row = idx + 1 < len(df)
                 
-                if is_divider:
-                    # Начинаем новую неделю
-                    current_week = 2 if current_week == 1 else 1
+                if is_divider and has_next_row:
+                    next_row = df.iloc[idx + 1]
+                    # Если следующая строка тоже содержит предмет, это разделение недель
+                    if pd.notna(next_row.get(group_col)):
+                        print(f"Найдено разделение недель для группы {group_col}")
+                        current_week = 2  # Текущая пара относится ко второй неделе
                     continue
                 
                 # Пропускаем пустые строки и строки без времени
@@ -302,6 +310,12 @@ def fetch_schedule():
                     'is_practice': False,
                     'file_hash': file_hash
                 }
+                
+                print(f"Добавлена пара для {group_col} ({day}, неделя {current_week}):")
+                print(f"Предмет: {subject}")
+                print(f"Преподаватель: {teacher}")
+                print(f"Кабинет: {room}")
+                print("---")
                 current_schedule.append(lesson_dict)
 
             # Добавляем последний день
