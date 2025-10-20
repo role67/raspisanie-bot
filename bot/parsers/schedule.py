@@ -144,24 +144,37 @@ def fetch_schedule():
                 if not time or not subject or subject.lower() == 'nan':
                     continue
                 
-                # Очищаем номер кабинета из строки преподавателя
+                # Определяем является ли значение похожим на номер кабинета
+                def is_room_number(text):
+                    return bool(text and any(c.isdigit() for c in text) and 
+                              ('-' in text or text.lower() in ['общ', 'общ.', 'общага']))
+
                 room = ''
+                clean_teacher = ''
+
                 if teacher:
                     parts = teacher.split()
-                    # Ищем часть, похожую на номер кабинета
+                    # Ищем номер кабинета среди частей
                     for part in parts:
-                        if any(c.isdigit() for c in part) and '-' in part:
+                        if is_room_number(part):
                             room = part
-                            # Удаляем номер кабинета из строки преподавателя
-                            teacher = teacher.replace(room, '').strip()
-                            break
+                        else:
+                            clean_teacher += part + ' '
+                    clean_teacher = clean_teacher.strip()
+
+                    # Если учитель пустой, а кабинет есть - возможно учитель был неправильно определен как кабинет
+                    if not clean_teacher and room:
+                        # Проверяем не является ли "кабинет" фамилией преподавателя
+                        if not is_room_number(room):
+                            clean_teacher = room
+                            room = ''
                 
                 if subject and subject != "-----":
                     current_schedule.append({
                         'time': time,
                         'subject': subject,
-                        'teacher': teacher if teacher and teacher.lower() != 'nan' else '',
-                        'room': room,
+                        'teacher': clean_teacher if clean_teacher and clean_teacher.lower() != 'nan' else '',
+                        'room': room.replace('общ', 'Общежитие').replace('общ.', 'Общежитие'),
                         'is_practice': False
                     })
             
