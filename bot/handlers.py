@@ -158,7 +158,7 @@ async def show_groups_list(callback: types.CallbackQuery, state: FSMContext, db=
         reply_markup=builder.as_markup()
     )
 
-from .parsers.schedule import fetch_schedule, fetch_replacements
+from .parsers.schedule import fetch_schedule, fetch_replacements, format_day_schedule
 
 async def get_schedule_text(group: str) -> str:
     """Формирует текст расписания для группы"""
@@ -257,21 +257,102 @@ async def choose_group(callback: types.CallbackQuery, state: FSMContext, db=None
     )
     await state.clear()
 
+
 @router.callback_query(F.data.startswith("schedule_"))
 async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=None):
-    group = callback.data.replace("schedule_", "")
-    
-    # Показываем статус загрузки
+    from datetime import datetime, timedelta
+    data = callback.data.split("_")
+    group = data[1]
+    view_type = data[2] if len(data) > 2 else "today"
     await callback.answer("⏳ Загружаю расписание...")
-    
-    # Получаем расписание
-    schedule_text = await get_schedule_text(group)
-    
-    # Создаем клавиатуру для возврата
+
+    schedule_data = fetch_schedule()
+    replacements_data = fetch_replacements()
+    today = datetime.now()
+    tomorrow = today + timedelta(days=1)
+    weekday_map = {
+        0: 'Понедельник',
+        1: 'Вторник',
+        2: 'Среда',
+        3: 'Четверг',
+        4: 'Пятница',
+        5: 'Суббота',
+        6: 'Воскресенье'
+    }
+
+    # Определяем день для отображения
+    if view_type == "today":
+        day = weekday_map[today.weekday()]
+        if today.weekday() == 6:
+            day = "Понедельник"
+        date_str = today.strftime('%d.%m.%Y')
+    elif view_type == "tomorrow":
+        day = weekday_map[tomorrow.weekday()]
+        if tomorrow.weekday() == 6:
+            day = "Понедельник"
+        date_str = tomorrow.strftime('%d.%m.%Y')
+    else:
+        day = None
+        date_str = None
+
+    # Получаем время последнего обновления
+    last_update = today
+    if pool:
+        async with pool.acquire() as conn:
+            update_time = await conn.fetchval(
+                "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
+            )
+            if update_time:
+                last_update = update_time
+
+    # Формируем текст расписания
+    if day:
+        # Получаем замены для дня (по дате)
+        replacements = []
+        if group in replacements_data:
+            # ищем замены по дате (строгое совпадение)
+            for date, reps in replacements_data[group].items():
+                if date_str and date_str in date:
+                    replacements.extend(reps)
+        schedule_text = format_day_schedule(
+            schedule_data.get(group, {}),
+            day,
+            replacements=replacements,
+            last_update=last_update
+        )
+    else:
+        # Неделя: выводим все дни подряд
+        week_days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
+        texts = []
+        for d in week_days:
+            replacements = []
+            if group in replacements_data:
+                for date, reps in replacements_data[group].items():
+                    if d in date:
+                        replacements.extend(reps)
+            texts.append(format_day_schedule(
+                schedule_data.get(group, {}),
+                d,
+                replacements=replacements,
+                last_update=last_update
+            ))
+        schedule_text = '\n'.join(texts)
+
+    # Клавиатура навигации
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Обновить расписание", callback_data=f"schedule_{group}")
-    builder.button(text="📚 Выбрать другую группу", callback_data="show_groups")
-    
+    if view_type == "today":
+        builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
+        builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
+    elif view_type == "tomorrow":
+        builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
+        builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
+    else:
+        builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
+        builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
+    builder.row()
+    builder.button(text="🔄 Обновить", callback_data=f"schedule_{group}_{view_type}")
+    builder.button(text="📚 Другая группа", callback_data="show_groups")
+
     await callback.message.edit_text(
         schedule_text,
         reply_markup=builder.as_markup(),

@@ -53,31 +53,64 @@ def fetch_schedule():
                 schedule_data[group_col] = [{'is_practice': True, 'practice_info': practice_data[group_col]}]
                 continue
                 
-            # Индекс преподавателя и кабинета
-            subj_idx = df.columns.get_loc(group_col)
-            teacher_idx = subj_idx + 1
-            room_idx = subj_idx + 2
+            # Получаем день недели из первой колонки
+            day_col = df.columns[0]
+            
+            current_day = None
+            current_schedule = []
             
             for idx, row in df.iterrows():
                 if idx >= practice_start if len(practice_rows) > 0 else False:
                     break
-                    
-                lesson_number = idx + 1
-                time = row.get('Интервал', '')
-                subject = row.get(group_col, '')
-                teacher = row.get(df.columns[teacher_idx], '') if teacher_idx < len(df.columns) else ''
-                room = row.get(df.columns[room_idx], '') if room_idx < len(df.columns) else ''
                 
-                # Пропускаем пустые строки
-                if pd.notna(subject) and str(subject).strip() and str(subject).strip().lower() != 'nan':
-                    schedule_data[group_col].append({
-                        'lesson_number': lesson_number,
-                        'time': str(time).strip(),
-                        'subject': str(subject).strip(),
-                        'teacher': str(teacher).strip(),
-                        'room': str(room).strip(),
+                # Проверяем, не начался ли новый день
+                if pd.notna(row[day_col]) and str(row[day_col]).strip():
+                    if current_day and current_schedule:
+                        if current_day not in schedule_data[group_col]:
+                            schedule_data[group_col][current_day] = []
+                        schedule_data[group_col][current_day].extend(current_schedule)
+                    current_day = str(row[day_col]).strip()
+                    current_schedule = []
+                    
+                time = str(row.get('Интервал', '')).strip()
+                subject = str(row.get(group_col, '')).strip()
+                
+                # Получаем следующий столбец для преподавателя
+                next_col = df.columns[df.columns.get_loc(group_col) + 1]
+                teacher = str(row.get(next_col, '')).strip()
+                
+                # Пропускаем строки без времени или предмета
+                if not time or not subject or subject.lower() == 'nan':
+                    continue
+                
+                # Очищаем номер кабинета из строки преподавателя
+                room = ''
+                if teacher:
+                    parts = teacher.split()
+                    # Ищем часть, похожую на номер кабинета
+                    for part in parts:
+                        if any(c.isdigit() for c in part) and '-' in part:
+                            room = part
+                            # Удаляем номер кабинета из строки преподавателя
+                            teacher = teacher.replace(room, '').strip()
+                            break
+                
+                if subject and subject != "-----":
+                    current_schedule.append({
+                        'time': time,
+                        'subject': subject,
+                        'teacher': teacher if teacher and teacher.lower() != 'nan' else '',
+                        'room': room,
                         'is_practice': False
                     })
+            
+            # Добавляем последний день
+            if current_day and current_schedule:
+                if not isinstance(schedule_data[group_col], dict):
+                    schedule_data[group_col] = {}
+                if current_day not in schedule_data[group_col]:
+                    schedule_data[group_col][current_day] = []
+                schedule_data[group_col][current_day].extend(current_schedule)
         print("schedule_data.keys():", list(schedule_data.keys()))
         return schedule_data
     except Exception as e:
@@ -140,65 +173,78 @@ def extract_groups_from_schedule():
 
 # Для теста:
 
-def format_schedule_for_group(group_lessons):
+def format_day_schedule(group_lessons, day, replacements=None, last_update=None):
     """
-    Форматирует расписание для группы в красивый текст для Telegram.
-    group_lessons: список занятий (dict с ключами lesson_number, time, subject, teacher, room)
+    Форматирует расписание для одного дня с заменами и временем обновления.
+    group_lessons: словарь с расписанием по дням недели
+    day: день недели ('Понедельник', ...)
+    replacements: список замен для этого дня (если есть)
+    last_update: datetime
     """
-    from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES, get_schedule_string
+    from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
     from datetime import datetime
-    
-    if not group_lessons:
-        return "❌ Расписание не найдено."
-        
-    # Проверяем, не на практике ли группа
-    if len(group_lessons) == 1 and group_lessons[0].get('is_practice', False):
-        practice_info = group_lessons[0].get('practice_info', '')
-        return f"⚡️ ГРУППА НА ПРАКТИКЕ ⚡️\n\n📝 {practice_info}"
-        
-    weekday = datetime.now().weekday()
-    schedule_header = get_schedule_string(weekday)
-    
-    # Выбираем расписание времени в зависимости от дня недели
-    if weekday == 0:  # Понедельник
+
+    day_map = {
+        'Понедельник': 'Понедельник',
+        'Вторник': 'Вторник',
+        'Среда': 'Среда',
+        'Четверг': 'Четверг',
+        'Пятница': 'Пятница',
+        'Суббота': 'Суббота'
+    }
+
+    # Определяем словарь времени
+    if day == 'Понедельник':
         times_dict = LESSON_TIMES
-    elif weekday == 5:  # Суббота
+    elif day == 'Суббота':
         times_dict = SATURDAY_TIMES
-    else:  # Вторник-пятница
+    else:
         times_dict = WEEKDAY_TIMES
-    
-    # Сгруппируем пары по номерам
-    lessons_by_number = {}
-    for lesson in group_lessons:
-        time = lesson.get('time', '')
-        if time not in lessons_by_number:
-            lessons_by_number[time] = []
-        lessons_by_number[time].append(lesson)
-    
-    lines = [schedule_header, "\n", "📅 РАСПИСАНИЕ ЗАНЯТИЙ\n"]
-    
-    for time, lessons in sorted(lessons_by_number.items()):
-        if not time:
+
+    # Заголовок
+    today = datetime.now()
+    lines = [f"📅 {today.strftime('%d.%m.%Y')} | {day_map.get(day, day)}  \n"]
+
+    lessons = group_lessons.get(day, [])
+    for idx, lesson in enumerate(lessons, 1):
+        subject = lesson.get('subject', '').strip()
+        teacher = lesson.get('teacher', '').strip()
+        room = lesson.get('room', '').strip()
+        time = lesson.get('time', '').strip()
+        if not subject or subject == "-----":
             continue
-            
-        lesson_num = time.split()[0]  # Получаем номер пары из "1 пара"
-        lines.append(f"{'_' * 7} Занятие №{lesson_num} {'_' * 7}")
-        lines.append(f"         ⏰«{times_dict.get(time, 'Время не указано')}»\n")
-        
-        for lesson in lessons:
-            subject = lesson.get('subject', '').strip()
-            teacher = lesson.get('teacher', '').strip()
-            room = lesson.get('room', '').strip()
-            
-            if subject and subject != "-----":
-                lines.append(f"📚 Предмет: {subject}")
-                if teacher:
-                    lines.append(f"👤 Преподаватель: {teacher}")
-                if room:
-                    lines.append(f"🚪 Кабинет: {room}")
-                lines.append("")
+        # Время пары
+        time_str = times_dict.get(time, time)
+        # Формат кабинета: "318-4" -> "Каб. 318-4"
+        room_str = f"Каб. {room}" if room else ""
+        # Вывод пары
+        lines.append(f"{idx} {subject} | {time_str}")
+        if teacher:
+            lines.append(f"👤 {teacher}")
+        if room_str:
+            lines.append(f"🚪 {room_str}")
         lines.append("")
-    
+
+    # Замены
+    if replacements:
+        lines.append("🔄 Замены")
+        for rep in replacements:
+            rep_subject = rep.get('subject', '').strip()
+            rep_lesson = rep.get('lesson', '').strip()
+            rep_room = rep.get('room', '').strip()
+            rep_teacher = rep.get('teacher', '').strip()
+            # Формат: "История вместо Физики"
+            lines.append(f"📚 {rep_subject} вместо {rep_lesson}")
+            if rep_teacher:
+                lines.append(f"👤 {rep_teacher}")
+            if rep_room:
+                lines.append(f"🚪 Каб. {rep_room}")
+            lines.append("")
+
+    # Время обновления
+    if last_update:
+        lines.append(f"� Обновлено: {last_update.strftime('%d.%m.%Y %H:%M')}")
+
     return '\n'.join(lines)
 
 # Для теста:
@@ -206,7 +252,8 @@ if __name__ == "__main__":
     schedule = fetch_schedule()
     for group, lessons in schedule.items():
         print(f"\nРасписание для группы {group}:")
-        print(format_schedule_for_group(lessons))
+        for day in lessons:
+            print(format_day_schedule(lessons, day))
     replacements = fetch_replacements()
     print(replacements)
     groups = extract_groups_from_schedule()

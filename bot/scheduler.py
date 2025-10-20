@@ -36,6 +36,12 @@ async def update_data(pool):
                                     INSERT INTO replacements (date, group_name, lesson_number, new_subject, classroom)
                                     VALUES ($1, $2, $3, $4, $5)
                                 """, date, group, change.get('lesson'), change.get('subject'), change.get('room'))
+                                
+                # Записываем время обновления
+                await conn.execute("""
+                    INSERT INTO schedule_updates (update_type)
+                    VALUES ('schedule')
+                """)
         
         logging.info('Данные успешно обновлены')
     except Exception as e:

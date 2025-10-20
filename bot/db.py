@@ -41,12 +41,21 @@ CREATE TABLE IF NOT EXISTS replacements (
 );
 """
 
+SCHEDULE_UPDATES_TABLE = """
+CREATE TABLE IF NOT EXISTS schedule_updates (
+    id SERIAL PRIMARY KEY,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    update_type TEXT
+);
+"""
+
 async def create_tables(pool):
     async with pool.acquire() as conn:
         await conn.execute(GROUPS_TABLE)
         await conn.execute(USER_TABLE)
         await conn.execute(SCHEDULE_TABLE)
         await conn.execute(REPLACEMENTS_TABLE)
+        await conn.execute(SCHEDULE_UPDATES_TABLE)
 
 async def update_groups_list(pool, groups):
     """Обновляет список групп в базе данных"""
