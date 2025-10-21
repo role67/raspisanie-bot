@@ -341,14 +341,22 @@ async def choose_group(callback: types.CallbackQuery, state: FSMContext, db=None
 @router.callback_query(F.data.startswith("schedule_"))
 async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=None):
     from datetime import datetime, timedelta
+    try:
+        from zoneinfo import ZoneInfo
+        tz_msk = ZoneInfo("Europe/Moscow")
+    except ImportError:
+        from pytz import timezone
+        tz_msk = timezone("Europe/Moscow")
+    now_msk = datetime.now(tz_msk)
+    today = now_msk
+    tomorrow = today + timedelta(days=1)
     data = callback.data.split("_")
     group = data[1]
     view_type = data[2] if len(data) > 2 else "today"
     await callback.answer("⏳ Загружаю расписание...")
 
     schedule_data = fetch_schedule()
-    today = datetime.now()
-    tomorrow = today + timedelta(days=1)
+    # today и tomorrow теперь в московском времени
     weekday_map = {
         0: 'Понедельник',
         1: 'Вторник',
