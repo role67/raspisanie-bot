@@ -240,15 +240,18 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
     group_data = schedule_data.get(group)
     if not group_data:
         return "❌ Расписание для группы не найдено"
-    lessons = lessons if lessons is not None else group_data.get(day, [])
+    if lessons is not None:
+        lessons_list = lessons
+    else:
+        lessons_list = group_data.get(day, []) if group_data else []
     num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
-    for lesson in lessons:
-        subject = lesson.get('subject', '').strip()
-        teacher = lesson.get('teacher', '').strip()
-        room = lesson.get('room', '').strip() or lesson.get('classroom', '').strip()
-        start_time = lesson.get('start_time', '').strip()
-        end_time = lesson.get('end_time', '').strip()
-        lesson_number = lesson.get('lesson_number')
+    for lesson in lessons_list:
+        subject = lesson.get('subject', '').strip() if lesson else ''
+        teacher = lesson.get('teacher', '').strip() if lesson else ''
+        room = (lesson.get('room', '').strip() if lesson else '') or (lesson.get('classroom', '').strip() if lesson else '')
+        start_time = lesson.get('start_time', '').strip() if lesson else ''
+        end_time = lesson.get('end_time', '').strip() if lesson else ''
+        lesson_number = lesson.get('lesson_number') if lesson else None
         if not subject or subject == "-----":
             continue
         # Формируем время пары
@@ -256,7 +259,7 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
             time_str = f"{start_time} - {end_time}"
         else:
             # fallback: по times_dict
-            time_key = lesson.get('time', '').strip()
+            time_key = lesson.get('time', '').strip() if lesson else ''
             time_str = times_dict.get(time_key, time_key)
         # Формируем номер пары с эмодзи
         if lesson_number and 1 <= lesson_number <= len(num_emoji):
