@@ -237,9 +237,10 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
         lines = [f"📅 {date_str} | {day}"]
     else:
         lines = [f"📅 {day}"]
-    lessons = lessons if lessons is not None else schedule_data[group].get(day, [])
-    if not lessons:
-        lines.append("\n❌ Расписание на этот день не найдено")
+    group_data = schedule_data.get(group)
+    if not group_data:
+        return "❌ Расписание для группы не найдено"
+    lessons = lessons if lessons is not None else group_data.get(day, [])
     num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     for lesson in lessons:
         subject = lesson.get('subject', '').strip()
@@ -372,7 +373,8 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
         if today.weekday() == 6:
             day = "Понедельник"
         date_str = today.strftime('%d.%m.%Y')
-        lessons = schedule_data.get(group, {}).get(day, [])
+        group_data = schedule_data.get(group)
+        lessons = group_data.get(day, []) if group_data else []
         last_update = today
         if pool:
             async with pool.acquire() as conn:
@@ -387,7 +389,8 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
         if tomorrow.weekday() == 6:
             day = "Понедельник"
         date_str = tomorrow.strftime('%d.%m.%Y')
-        lessons = schedule_data.get(group, {}).get(day, [])
+        group_data = schedule_data.get(group)
+        lessons = group_data.get(day, []) if group_data else []
         last_update = today
         if pool:
             async with pool.acquire() as conn:
@@ -409,7 +412,8 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
                 if update_time:
                     last_update = update_time
         for d in week_days:
-            lessons = schedule_data.get(group, {}).get(d, [])
+            group_data = schedule_data.get(group)
+            lessons = group_data.get(d, []) if group_data else []
             texts.append(get_schedule_text(group, d, None, lessons, last_update))
         schedule_text = '\n'.join(texts)
 
