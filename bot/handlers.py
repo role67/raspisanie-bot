@@ -240,33 +240,29 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
     group_data = schedule_data.get(group)
     if not group_data:
         return "❌ Расписание для группы не найдено"
-    if lessons is not None:
-        lessons_list = lessons
+    if lessons is not None and isinstance(lessons, list):
+        lessons_list = [l for l in lessons if isinstance(l, dict)]
     else:
-        lessons_list = group_data.get(day, []) if group_data else []
+        lessons_list = [l for l in group_data.get(day, []) if isinstance(l, dict)] if isinstance(group_data, dict) else []
     num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     for lesson in lessons_list:
-        subject = lesson.get('subject', '').strip() if lesson else ''
-        teacher = lesson.get('teacher', '').strip() if lesson else ''
-        room = (lesson.get('room', '').strip() if lesson else '') or (lesson.get('classroom', '').strip() if lesson else '')
-        start_time = lesson.get('start_time', '').strip() if lesson else ''
-        end_time = lesson.get('end_time', '').strip() if lesson else ''
-        lesson_number = lesson.get('lesson_number') if lesson else None
+        subject = lesson.get('subject', '').strip()
+        teacher = lesson.get('teacher', '').strip()
+        room = lesson.get('room', '').strip() or lesson.get('classroom', '').strip()
+        start_time = lesson.get('start_time', '').strip()
+        end_time = lesson.get('end_time', '').strip()
+        lesson_number = lesson.get('lesson_number')
         if not subject or subject == "-----":
             continue
-        # Формируем время пары
         if start_time and end_time:
             time_str = f"{start_time} - {end_time}"
         else:
-            # fallback: по times_dict
-            time_key = lesson.get('time', '').strip() if lesson else ''
+            time_key = lesson.get('time', '').strip()
             time_str = times_dict.get(time_key, time_key)
-        # Формируем номер пары с эмодзи
-        if lesson_number and 1 <= lesson_number <= len(num_emoji):
+        if lesson_number and isinstance(lesson_number, int) and 1 <= lesson_number <= len(num_emoji):
             num = num_emoji[lesson_number-1]
         else:
             num = str(lesson_number) if lesson_number else ""
-        # Формируем кабинет
         room_str = ""
         if room:
             if any(x in room.lower() for x in ['общ', 'общежитие']):
@@ -275,7 +271,6 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
                 room_str = room
             else:
                 room_str = f"Каб. {room}"
-        # Формируем строку пары
         lines.append(f"{num} {subject} | {time_str}")
         if teacher:
             lines.append(f"👤 {teacher}")
