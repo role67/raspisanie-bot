@@ -93,11 +93,13 @@ async def main_replacements(message: types.Message, bot, db=None):
     for date, replacements in replacements_data[group].items():
         text += f"📅 {date}:\n"
         for rep in replacements:
-            text += f"{'_' * 7} Занятие №{rep['lesson']} {'_' * 7}\n"
-            text += f"📚 Предмет: {rep['subject']}\n"
-            if rep.get('teacher'):
-                text += f"👤 Преподаватель: {rep['teacher']}\n"
-            text += f"🚪 Кабинет: {rep['room']}\n\n"
+            if not isinstance(rep, dict):
+                continue
+            text += f"{'_' * 7} Занятие №{rep.get('lesson', '')} {'_' * 7}\n"
+            text += f"📚 Предмет: {rep.get('subject', '')}\n"
+            if isinstance(rep, dict) and rep.get('teacher'):
+                text += f"👤 Преподаватель: {rep.get('teacher', '')}\n"
+            text += f"🚪 Кабинет: {rep.get('room', '')}\n\n"
             
     await message.answer(text)
 
@@ -246,6 +248,8 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
         lessons_list = [l for l in group_data.get(day, []) if isinstance(l, dict)] if isinstance(group_data, dict) else []
     num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     for lesson in lessons_list:
+        if not isinstance(lesson, dict):
+            continue
         subject = lesson.get('subject', '').strip()
         teacher = lesson.get('teacher', '').strip()
         room = lesson.get('room', '').strip() or lesson.get('classroom', '').strip()
