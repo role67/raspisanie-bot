@@ -79,7 +79,7 @@ async def create_tables(pool: asyncpg.Pool):
         """)
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
     
     from aiogram.client.bot import DefaultBotProperties
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -92,32 +92,35 @@ async def main():
 
     app = web.Application()
     app['db_pool'] = await create_pool()
-    app['bot'] = bot  # Store bot instance in app
-
+    app['bot'] = bot
     # Создаем таблицы
-    await create_tables(app['db_pool'])
-    
-    # Добавляем группы в базу данных
-    groups_added = await add_groups_to_db(app['db_pool'])
-    logging.info(f"Добавлено {groups_added} групп в базу данных")
-
+    try:
+        await create_tables(app['db_pool'])
+        groups_added = await add_groups_to_db(app['db_pool'])
+        logging.info(f"Добавлено {groups_added} групп в базу данных")
+    except Exception as e:
+        logging.error(f"Ошибка при инициализации таблиц/групп: {e}")
     # Настраиваем apscheduler
-    scheduler = setup_scheduler(app)
-    
+    try:
+        scheduler = setup_scheduler(app)
+    except Exception as e:
+        logging.error(f"Ошибка при запуске scheduler: {e}")
     # Configure webhook
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
     )
     webhook_requests_handler.register(app, path="/webhook")
-
     # Startup and shutdown hooks
     app.on_startup.append(lambda app: on_startup(bot, dp, app))
     app.on_shutdown.append(on_shutdown)
-
-    # Store bot and dispatcher instances in app
     app['bot'] = bot
     app['dp'] = dp
+    # Глобальный error handler для aiohttp
+    async def handle_500(request):
+        logging.error(f"500 Internal Server Error: {request.method} {request.path}")
+        return web.Response(text="Internal Server Error", status=500)
+    app.router.add_route('*', '/error', handle_500)
 
     # Setup AIOHTTP app
     setup_application(app, dp, bot=bot)
