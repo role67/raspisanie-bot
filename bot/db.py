@@ -10,7 +10,8 @@ USER_TABLE = """
 CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT PRIMARY KEY,
     group_name TEXT REFERENCES groups(name),
-    joined_at TIMESTAMP DEFAULT NOW()
+    joined_at TIMESTAMP DEFAULT NOW(),
+    role TEXT DEFAULT NULL -- роль: 'student', 'teacher', NULL
 );
 """
 
@@ -78,6 +79,15 @@ CREATE TABLE IF NOT EXISTS schedule_updates (
 async def create_tables(pool):
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Сохраняем текущие группы перед удалением
+            existing_groups = await conn.fetch("SELECT name FROM groups")
+            existing_groups = [g['name'] for g in existing_groups]
+            
+            # Сохраняем текущую неделю
+            current_week = await conn.fetchval(
+                "SELECT week_number FROM current_week WHERE id = 1"
+            ) or 2
+            
             # Удаляем старые таблицы для чистой установки
             await conn.execute("""
                 DROP TABLE IF EXISTS schedule CASCADE;
@@ -96,13 +106,20 @@ async def create_tables(pool):
             await conn.execute(SCHEDULE_UPDATES_TABLE)
             await conn.execute(CURRENT_WEEK_TABLE)
             
-            # Инициализируем текущую неделю (2-я неделя)
+            # Восстанавливаем группы
+            if existing_groups:
+                await conn.executemany(
+                    "INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+                    [(group,) for group in existing_groups]
+                )
+            
+            # Инициализируем текущую неделю с сохраненным значением
             await conn.execute("""
                 INSERT INTO current_week (id, week_number, changed_at)
-                VALUES (1, 2, NOW())
+                VALUES (1, $1, NOW())
                 ON CONFLICT (id) DO UPDATE 
-                SET week_number = 2, changed_at = NOW();
-            """)
+                SET week_number = $1, changed_at = NOW();
+            """, current_week)
             
             # Добавляем индексы для оптимизации
             await conn.execute("""
@@ -121,6 +138,20 @@ async def create_tables(pool):
                 CREATE INDEX IF NOT EXISTS idx_schedule_teacher 
                 ON schedule(teacher_id);
             """)
+            
+            # Инициализируем расписание после создания таблиц
+            try:
+                from .parsers.schedule import fetch_schedule
+                print("Загружаем начальное расписание...")
+                schedule_data = await fetch_schedule()
+                if schedule_data:
+                    await store_schedule(pool, schedule_data)
+                    print("Начальное расписание загружено")
+                else:
+                    print("Не удалось загрузить начальное расписание")
+            except Exception as e:
+                print(f"Ошибка при загрузке начального расписания: {e}")
+                # Продолжаем работу даже при ошибке загрузки расписания
 
 async def update_groups_list(pool, groups):
     """Обновляет список групп в базе данных"""
@@ -233,14 +264,37 @@ async def store_schedule(pool, schedule_data):
     subject_names = set()
     teacher_names = set()
     
+    try:
+        # Валидация структуры данных
+        if not isinstance(schedule_data, dict):
+            print("Ошибка: неверный формат данных расписания")
+            return
+            
+        if not schedule_data:
+            print("Ошибка: пустой словарь расписания")
+            return
+            
+        # Получаем хеш файла из данных
+        try:
+            first_group = next(iter(schedule_data))
+            first_day = next(iter(schedule_data[first_group]))
+            first_lesson = schedule_data[first_group][first_day][0]
+            file_hash = first_lesson.get('file_hash', '')
+        except (StopIteration, KeyError, IndexError) as e:
+            print(f"Ошибка при получении хеша файла: {e}")
+            return
+            
+    except Exception as e:
+        print(f"Ошибка при подготовке данных: {e}")
+        return
+        
     async with pool.acquire() as conn:
         async with conn.transaction():
             try:
-                # Получаем хеш файла из данных
-                first_group = next(iter(schedule_data))
-                first_day = next(iter(schedule_data[first_group]))
-                first_lesson = schedule_data[first_group][first_day][0]
-                file_hash = first_lesson.get('file_hash', '')
+                # Проверка хеша файла
+                if not file_hash:
+                    print("Ошибка: отсутствует хеш файла")
+                    return
                 
                 if not file_hash:
                     print("Ошибка: отсутствует хеш файла")
@@ -257,18 +311,38 @@ async def store_schedule(pool, schedule_data):
 
                 print("Начинаем сохранение расписания в БД...")
                 
+                print("Количество найденных групп:", len(schedule_data))
+                
+                # Собираем все предметы и преподавателей
+                for group, days in schedule_data.items():
+                    if not isinstance(days, dict):
+                        print(f"Пропуск группы {group}: неверный формат данных")
+                        continue
+                        
+                    for day, lessons in days.items():
+                        if not isinstance(lessons, list):
+                            print(f"Пропуск дня {day} для группы {group}: неверный формат данных")
+                            continue
+                            
+                        for lesson in lessons:
+                            if not isinstance(lesson, dict):
+                                print(f"Пропуск урока для группы {group} в день {day}: неверный формат данных")
+                                continue
+                                
+                            subject = lesson.get('subject', '').strip()
+                            teacher = lesson.get('teacher', '').strip()
+                            
+                            if subject:
+                                subject_names.add(subject)
+                            if teacher:
+                                teacher_names.add(teacher)
+                                
+                print("Найдено предметов:", len(subject_names))
+                print("Найдено преподавателей:", len(teacher_names))
+                
             except Exception as e:
-                print(f"Ошибка при подготовке к сохранению расписания: {e}")
+                print(f"Ошибка при сборе данных о предметах и преподавателях: {e}")
                 raise
-            
-            # Собираем все предметы и преподавателей
-            for group, days in schedule_data.items():
-                for day, lessons in days.items():
-                    for lesson in lessons:
-                        if lesson.get('subject'):
-                            subject_names.add(lesson['subject'])
-                        if lesson.get('teacher'):
-                            teacher_names.add(lesson['teacher'])
                             
             # Массово создаем предметы и преподавателей
             await conn.executemany(
