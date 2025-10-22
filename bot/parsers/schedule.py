@@ -356,12 +356,18 @@ def fetch_schedule():
                 try:
                     if pd.notna(row[0]) and str(row[0]).strip():
                         group = str(row[0]).strip()
-                        # Проверяем, что значение в ячейке практики - строка
-                        practice_value = row[2] if len(row) > 2 else None
-                        if isinstance(practice_value, (str, float, int)) and pd.notna(practice_value):
-                            practice_info = str(practice_value).strip()
-                            if group and practice_info and group != "ПРАКТИКИ":
+                        # Получаем все непустые значения из строки
+                        practice_values = []
+                        for i in range(1, len(row)):
+                            if pd.notna(row[i]) and str(row[i]).strip():
+                                practice_values.append(str(row[i]).strip())
+                        
+                        # Если нашли хотя бы одно значение и это не заголовок "ПРАКТИКИ"
+                        if practice_values and group != "ПРАКТИКИ":
+                            practice_info = " ".join(practice_values)
+                            if group and practice_info:
                                 practice_data[group] = practice_info
+                                logging.debug(f"Добавлена информация о практике для группы {group}")
                 except (IndexError, TypeError, AttributeError) as e:
                     logging.error(f"Ошибка при обработке строки практики {idx}: {e}")
         
@@ -370,6 +376,7 @@ def fetch_schedule():
         # Заполняем пропуски времени (интервала)
         if 'Интервал' in df.columns:
             df['Интервал'] = df['Интервал'].ffill()
+            logging.debug("Заполнены пропуски в столбце 'Интервал'")
 
         # Импортируем времена пар
         from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
@@ -390,10 +397,21 @@ def fetch_schedule():
             schedule_data[group_col] = {}
             try:
                 if group_col in practice_data:
-                    schedule_data[group_col] = {'practice': [{'is_practice': True, 'practice_info': practice_data[group_col]}]}
-                    continue
+                    practice_info = practice_data[group_col]
+                    # Проверяем что информация о практике не пустая
+                    if practice_info and practice_info.strip():
+                        schedule_data[group_col] = {
+                            'practice': [{
+                                'is_practice': True,
+                                'practice_info': practice_info.strip()
+                            }],
+                            'updated': True  # Маркер что данные обновлены
+                        }
+                        logging.info(f"Добавлена практика для группы {group_col}: {practice_info.strip()}")
+                        continue
             except (TypeError, AttributeError) as e:
                 logging.error(f"Ошибка при обработке практики для группы {group_col}: {e}")
+                continue  # Пропускаем группу при ошибке
             #
             day_col = df.columns[0]
             cabinet_col = df.columns[df.columns.get_loc(group_col) + 1]
@@ -553,9 +571,9 @@ def fetch_replacements():
         try:
             doc = Document(BytesIO(resp.content))
         except Exception as e:
-            print(f"Ошибка при открытии файла Word с заменами: {e}")
+            logging.error(f"Ошибка при открытии файла Word с заменами: {e}")
             return {}
-        print(f"doc.tables: {len(doc.tables)} таблиц")
+        logging.info(f"Найдено таблиц в документе замен: {len(doc.tables)}")
         replacements_data = {}
         current_date = None
         if not doc.tables:
@@ -564,16 +582,16 @@ def fetch_replacements():
             
         for table_idx, table in enumerate(doc.tables):
             try:
-                print(f"Обработка таблицы {table_idx}, строк: {len(table.rows)}")
+                logging.debug(f"Обработка таблицы замен {table_idx}, найдено строк: {len(table.rows)}")
                 
                 if not table.rows:
-                    print(f"Таблица {table_idx} пуста")
+                    logging.warning(f"Таблица замен {table_idx} пуста")
                     continue
                     
                 for row_idx, row in enumerate(table.rows):
                     try:
                         cells = [cell.text.strip() for cell in row.cells]
-                        print(f"Row {row_idx}: {cells}")
+                        logging.debug(f"Обработка строки замен {row_idx}: {cells}")
 
                         # Поиск даты в первой или второй ячейке
                         date_candidate = None
@@ -635,7 +653,7 @@ def fetch_replacements():
                                     'teacher': teacher1,
                                     'room': room1,
                                 })
-                                print(f"Добавлена замена для группы {group} (1)")
+                                logging.debug(f"Добавлена первая замена для группы {group}")
                             # Вторая замена
                             lesson2 = cells[5].strip()
                             subject2 = cells[6].strip()
@@ -648,7 +666,7 @@ def fetch_replacements():
                                     'teacher': teacher2,
                                     'room': room2,
                                 })
-                                print(f"Добавлена замена для группы {group} (2)")
+                                logging.debug(f"Добавлена вторая замена для группы {group}")
                         # Если строка обычная (одна замена)
                         elif len(cells) >= 4:
                             lesson = cells[1].strip()
@@ -674,12 +692,11 @@ def fetch_replacements():
             except Exception as e:
                 print(f"Ошибка при обработке таблицы {table_idx}: {e}")
                 continue
-                
+
         if not replacements_data:
-            print("Не найдено данных о заменах")
+            logging.warning("Не найдено данных о заменах")
         else:
-            print("Найдены замены для групп:", list(replacements_data.keys()))
-            
+            logging.info(f"Найдены замены для групп: {list(replacements_data.keys())}")
         return replacements_data
     except Exception as e:
         print(f"Ошибка при получении замен: {e}")
