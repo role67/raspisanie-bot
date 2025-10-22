@@ -1,3 +1,46 @@
+import pandas as pd
+import requests
+from io import BytesIO
+from docx import Document
+import random
+import os
+from pathlib import Path
+import threading
+import logging
+
+SCHEDULE_URL = "https://www.nkptiu.ru/doc/raspisanie/raspisanie.xls"
+REPLACEMENTS_URL = "https://www.nkptiu.ru/doc/raspisanie/zameni.docx"
+
+def load_user_agents():
+    """Загружает User-Agent'ы из файлов"""
+    agents = {
+        'windows': [],
+        'mac': [],
+        'ios': [],
+        'android': []
+    }
+    
+    base_path = Path(__file__).parent.parent / 'useragents'
+    
+    # Загружаем по 100 агентов каждого типа
+    for platform in agents.keys():
+        file_path = base_path / f"{platform}.txt"
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                # Берем первые 100 строк, пропуская пустые
+                agents[platform] = [line.strip() for line in f if line.strip()][:100]
+    
+    return agents
+
+
+# Загружаем User-Agent'ы при импорте модуля
+USER_AGENTS = load_user_agents()
+
+# Глобальный кэш расписания и блокировка
+_schedule_cache = None
+_schedule_cache_lock = threading.Lock()
+_schedule_cache_hash = None
+
 # --- Новый парсер строки расписания ---
 def split_subject_teacher(cell: str):
     """
@@ -164,49 +207,6 @@ def format_day_schedule(group_lessons, day, replacements=None, date_str=None, la
         return '\n'.join(lines)
     except Exception:
         return "❌ Ошибка при формировании расписания"
-
-import pandas as pd
-import requests
-from io import BytesIO
-from docx import Document
-import random
-import os
-from pathlib import Path
-import threading
-import logging
-
-SCHEDULE_URL = "https://www.nkptiu.ru/doc/raspisanie/raspisanie.xls"
-REPLACEMENTS_URL = "https://www.nkptiu.ru/doc/raspisanie/zameni.docx"
-
-def load_user_agents():
-    """Загружает User-Agent'ы из файлов"""
-    agents = {
-        'windows': [],
-        'mac': [],
-        'ios': [],
-        'android': []
-    }
-    
-    base_path = Path(__file__).parent.parent / 'useragents'
-    
-    # Загружаем по 100 агентов каждого типа
-    for platform in agents.keys():
-        file_path = base_path / f"{platform}.txt"
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                # Берем первые 100 строк, пропуская пустые
-                agents[platform] = [line.strip() for line in f if line.strip()][:100]
-    
-    return agents
-
-
-# Загружаем User-Agent'ы при импорте модуля
-USER_AGENTS = load_user_agents()
-
-# Глобальный кэш расписания и блокировка
-_schedule_cache = None
-_schedule_cache_lock = threading.Lock()
-_schedule_cache_hash = None
 
 def get_random_headers():
     """Возвращает случайный User-Agent и базовые заголовки"""
@@ -433,8 +433,22 @@ def fetch_schedule():
                 if cell_value == "-----":
                     i += 1
                     continue
-                # Улучшенный парсинг предмета и преподавателя
+                # Парсим первую и вторую неделю
                 subject1, teacher1, room1, subgroup1 = split_subject_teacher(cell_value)
+                room1_final = room1 if room1 else (cabinet_value if cabinet_value and cabinet_value.lower() != 'nan' else '—')
+                lesson_dict_1 = {
+                    'lesson_number': lesson_counter,
+                    'time': time,
+                    'subject': subject1,
+                    'teacher': teacher1,
+                    'room': room1_final,
+                    'subgroup': subgroup1,
+                    'week_number': 1,
+                    'is_subgroup': bool(subgroup1),
+                    'file_hash': file_hash
+                }
+                week_lessons[1].append(lesson_dict_1)
+
                 subject2 = ''
                 teacher2 = ''
                 room2 = ''
@@ -442,90 +456,27 @@ def fetch_schedule():
                 if i+1 < len(df):
                     next_row = df.iloc[i+1]
                     next_value = str(next_row.get(group_col, '')).strip()
+                    next_cabinet_value = str(next_row.get(cabinet_col, '')).strip()
                     if next_value and next_value != "-----":
                         subject2, teacher2, room2, subgroup2 = split_subject_teacher(next_value)
-                        if subject2 and not teacher2 and i+2 < len(df):
-                            third_row = df.iloc[i+2]
-                            third_value = str(third_row.get(group_col, '')).strip()
-                            _, teacher2, room2, subgroup2 = split_subject_teacher(third_value)
-                            i += 3
-                        else:
-                            i += 2
+                        room2_final = room2 if room2 else (next_cabinet_value if next_cabinet_value and next_cabinet_value.lower() != 'nan' else '—')
+                        lesson_dict_2 = {
+                            'lesson_number': lesson_counter,
+                            'time': time,
+                            'subject': subject2,
+                            'teacher': teacher2,
+                            'room': room2_final,
+                            'subgroup': subgroup2,
+                            'week_number': 2,
+                            'is_subgroup': bool(subgroup2),
+                            'file_hash': file_hash
+                        }
+                        week_lessons[2].append(lesson_dict_2)
+                        i += 2
                     else:
                         i += 1
                 else:
                     i += 1
-                room = room1 if room1 else (cabinet_value if cabinet_value and cabinet_value.lower() != 'nan' else '—')
-                lesson_dict_1 = {
-                    'lesson_number': lesson_counter,
-                    'time': time,
-                    'subject': subject1,
-                    'teacher': teacher1,
-                    'room': room,
-                    'subgroup': subgroup1,
-                    'week_number': 1,
-                    'is_subgroup': bool(subgroup1),
-                    'file_hash': file_hash
-                }
-                week_lessons[1].append(lesson_dict_1)
-                if subject2:
-                    room2_final = room2 if room2 else room
-                    lesson_dict_2 = {
-                        'lesson_number': lesson_counter,
-                        'time': time,
-                        'subject': subject2,
-                        'teacher': teacher2,
-                        'room': room2_final,
-                        'subgroup': subgroup2,
-                        'week_number': 2,
-                        'is_subgroup': bool(subgroup2),
-                        'file_hash': file_hash
-                    }
-                    week_lessons[2].append(lesson_dict_2)
-
-                subject1, teacher1 = split_subject_teacher(cell_value)
-                subject2 = ''
-                teacher2 = ''
-                if i+1 < len(df):
-                    next_row = df.iloc[i+1]
-                    next_value = str(next_row.get(group_col, '')).strip()
-                    if next_value and next_value != "-----":
-                        subject2, teacher2 = split_subject_teacher(next_value)
-                        if subject2 and not teacher2 and i+2 < len(df):
-                            third_row = df.iloc[i+2]
-                            third_value = str(third_row.get(group_col, '')).strip()
-                            _, teacher2 = split_subject_teacher(third_value)
-                            i += 3
-                        else:
-                            i += 2
-                    else:
-                        i += 1
-                else:
-                    i += 1
-                room = cabinet_value if cabinet_value and cabinet_value.lower() != 'nan' else '—'
-                lesson_dict_1 = {
-                    'lesson_number': lesson_counter,
-                    'time': time,
-                    'subject': subject1,
-                    'teacher': teacher1,
-                    'room': room,
-                    'week_number': 1,
-                    'is_subgroup': False,
-                    'file_hash': file_hash
-                }
-                week_lessons[1].append(lesson_dict_1)
-                if subject2:
-                    lesson_dict_2 = {
-                        'lesson_number': lesson_counter,
-                        'time': time,
-                        'subject': subject2,
-                        'teacher': teacher2,
-                        'room': room,
-                        'week_number': 2,
-                        'is_subgroup': False,
-                        'file_hash': file_hash
-                    }
-                    week_lessons[2].append(lesson_dict_2)
             # Добавляем последний день
             if current_day and (week_lessons[1] or week_lessons[2]):
                 if not isinstance(schedule_data[group_col], dict):
