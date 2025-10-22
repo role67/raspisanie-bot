@@ -259,34 +259,44 @@ def fetch_schedule():
                 if cell_value == "-----":
                     i += 1
                     continue
-                # Предмет первой недели
-                subject1 = cell_value
-                teacher1 = ''
+                # Улучшенный парсинг предмета и преподавателя
+                def split_subject_teacher(val):
+                    val = str(val).strip()
+                    if not val or val.lower() == 'nan':
+                        return '', ''
+                    # Если есть пробел, делим на предмет и преподавателя
+                    parts = val.split()
+                    if len(parts) > 1:
+                        # Если первая часть похожа на предмет (есть цифры/точки/буквы), а вторая на фамилию
+                        if any(c.isdigit() for c in parts[0]) or '.' in parts[0]:
+                            subject = parts[0]
+                            teacher = ' '.join(parts[1:])
+                        else:
+                            subject = ' '.join(parts[:-1])
+                            teacher = parts[-1]
+                        return subject, teacher
+                    return val, ''
+
+                subject1, teacher1 = split_subject_teacher(cell_value)
                 subject2 = ''
                 teacher2 = ''
-                # Следующая строка — преподаватель или предмет второй недели
                 if i+1 < len(df):
                     next_row = df.iloc[i+1]
                     next_value = str(next_row.get(group_col, '')).strip()
-                    # Если в следующей строке снова предмет, значит это предмет второй недели
-                    if next_value and next_value != "-----" and not any(x in next_value for x in [".", " "]):
-                        subject2 = next_value
-                        # Третья строка — преподаватель второй недели
-                        if i+2 < len(df):
+                    if next_value and next_value != "-----":
+                        subject2, teacher2 = split_subject_teacher(next_value)
+                        if subject2 and not teacher2 and i+2 < len(df):
                             third_row = df.iloc[i+2]
                             third_value = str(third_row.get(group_col, '')).strip()
-                            teacher2 = third_value if third_value and third_value != "-----" else ''
-                        # Преподаватель первой недели отсутствует
-                        teacher1 = ''
-                        i += 3
+                            _, teacher2 = split_subject_teacher(third_value)
+                            i += 3
+                        else:
+                            i += 2
                     else:
-                        teacher1 = next_value if next_value and next_value != "-----" else ''
-                        i += 2
+                        i += 1
                 else:
                     i += 1
-                # Кабинет
                 room = cabinet_value if cabinet_value and cabinet_value.lower() != 'nan' else '—'
-                # Добавляем в week_lessons
                 lesson_dict_1 = {
                     'lesson_number': lesson_counter,
                     'time': time,
