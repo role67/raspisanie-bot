@@ -353,11 +353,17 @@ def fetch_schedule():
             practice_start = practice_rows[0]
             # Читаем практики после строки "ПРАКТИКИ"
             for idx, row in df.iloc[practice_start+1:].iterrows():
-                if pd.notna(row[0]) and str(row[0]).strip():
-                    group = str(row[0]).strip()
-                    practice_info = str(row[2]).strip() if len(row) > 2 and pd.notna(row[2]) else ""
-                    if group and practice_info and group != "ПРАКТИКИ":
-                        practice_data[group] = practice_info
+                try:
+                    if pd.notna(row[0]) and str(row[0]).strip():
+                        group = str(row[0]).strip()
+                        # Проверяем, что значение в ячейке практики - строка
+                        practice_value = row[2] if len(row) > 2 else None
+                        if isinstance(practice_value, (str, float, int)) and pd.notna(practice_value):
+                            practice_info = str(practice_value).strip()
+                            if group and practice_info and group != "ПРАКТИКИ":
+                                practice_data[group] = practice_info
+                except (IndexError, TypeError, AttributeError) as e:
+                    logging.error(f"Ошибка при обработке строки практики {idx}: {e}")
         
     # Логирование убрано для оптимизации
         
@@ -382,9 +388,12 @@ def fetch_schedule():
 
         for group_col in group_cols:
             schedule_data[group_col] = {}
-            if group_col in practice_data:
-                schedule_data[group_col] = {'practice': [{'is_practice': True, 'practice_info': practice_data[group_col]}]}
-                continue
+            try:
+                if group_col in practice_data:
+                    schedule_data[group_col] = {'practice': [{'is_practice': True, 'practice_info': practice_data[group_col]}]}
+                    continue
+            except (TypeError, AttributeError) as e:
+                logging.error(f"Ошибка при обработке практики для группы {group_col}: {e}")
             #
             day_col = df.columns[0]
             cabinet_col = df.columns[df.columns.get_loc(group_col) + 1]
