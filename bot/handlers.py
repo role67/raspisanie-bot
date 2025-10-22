@@ -239,13 +239,13 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
         lines = [f"📅 {date_str} | {day}"]
     else:
         lines = [f"📅 {day}"]
-    group_data = schedule_data.get(group)
-    if not group_data:
+    group_data = schedule_data.get(group) if isinstance(schedule_data, dict) else None
+    if not isinstance(group_data, dict):
         return "❌ Расписание для группы не найдено"
     if lessons is not None and isinstance(lessons, list):
         lessons_list = [l for l in lessons if isinstance(l, dict)]
     else:
-        lessons_list = [l for l in group_data.get(day, []) if isinstance(l, dict)] if isinstance(group_data, dict) else []
+        lessons_list = [l for l in group_data.get(day, []) if isinstance(l, dict)]
     num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     for lesson in lessons_list:
         if not isinstance(lesson, dict):
@@ -262,7 +262,7 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
             time_str = f"{start_time} - {end_time}"
         else:
             time_key = lesson.get('time', '').strip()
-            time_str = times_dict.get(time_key, time_key)
+            time_str = times_dict.get(time_key, time_key) if isinstance(times_dict, dict) else str(time_key)
         if lesson_number and isinstance(lesson_number, int) and 1 <= lesson_number <= len(num_emoji):
             num = num_emoji[lesson_number-1]
         else:
