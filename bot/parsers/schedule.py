@@ -329,10 +329,11 @@ def fetch_schedule():
                 resp = requests.get(SCHEDULE_URL, headers=headers, timeout=30)
                 resp.raise_for_status()
                 if resp.status_code != 200 or len(resp.content) < 1000:
-                    logging.error("Ошибка при получении файла расписания: неверный статус или пустой файл")
+                    logging.error(f"Ошибка при получении файла расписания: статус={resp.status_code}, длина={len(resp.content)}")
                     return {}
                 file_hash = hash(resp.content)
                 if _schedule_cache is not None and _schedule_cache_hash == file_hash:
+                    logging.info("Возвращаем кэш расписания")
                     return _schedule_cache.copy() if isinstance(_schedule_cache, dict) else {}
                 xls = BytesIO(resp.content)
             except Exception as e:
@@ -341,12 +342,19 @@ def fetch_schedule():
         try:
             try:
                 df = pd.read_excel(xls, engine='xlrd', na_values=[''])
-            except:
+            except Exception as e1:
                 xls.seek(0)
-                df = pd.read_excel(xls, engine='openpyxl', na_values=[''])
+                try:
+                    df = pd.read_excel(xls, engine='openpyxl', na_values=[''])
+                except Exception as e2:
+                    logging.error(f"Ошибка чтения xls: xlrd={e1}, openpyxl={e2}")
+                    return {}
             if df.empty or len(df.columns) < 3:
+                logging.error(f"DataFrame пустой или мало колонок: shape={df.shape}, columns={df.columns}")
                 return {}
-        except Exception:
+            logging.info(f"DataFrame загружен: shape={df.shape}, columns={list(df.columns)}")
+        except Exception as e:
+            logging.error(f"Ошибка при обработке DataFrame: {e}")
             return {}
         practice_rows = df[df.iloc[:, 0] == "ПРАКТИКИ"].index
         practice_data = {}
