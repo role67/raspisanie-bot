@@ -1,5 +1,13 @@
 import logging
 from aiogram import Router, F, types
+from logging import Logger
+logger = logging.getLogger("handlers")
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = logging.Formatter('[%(asctime)s] %(levelname)s %(name)s: %(message)s')
+handler.setFormatter(formatter)
+if not logger.hasHandlers():
+    logger.addHandler(handler)
 from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -30,84 +38,90 @@ class ProfileStates(StatesGroup):
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, pool=None):
-    is_admin = message.from_user.id in ADMINS
-    menu = get_main_menu(is_admin)
-    # Создаем инлайн клавиатуру для выбора группы
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📚 Выбрать группу", callback_data="show_groups")
-    
-    await message.answer(
-        "👋 Привет! Я бот расписания колледжа. Выберите действие через меню ниже:",
-        reply_markup=menu
-    )
-    await message.answer(
-        "Нажмите кнопку ниже, чтобы выбрать вашу группу:",
-        reply_markup=builder.as_markup()
-    )
+    try:
+        is_admin = message.from_user.id in ADMINS
+        menu = get_main_menu(is_admin)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="📚 Выбрать группу", callback_data="show_groups")
+        await message.answer(
+            "👋 Привет! Я бот расписания колледжа. Выберите действие через меню ниже:",
+            reply_markup=menu
+        )
+        await message.answer(
+            "Нажмите кнопку ниже, чтобы выбрать вашу группу:",
+            reply_markup=builder.as_markup()
+        )
+        logger.info(f"[cmd_start] Пользователь {message.from_user.id} стартовал бота")
+    except Exception as e:
+        logger.error(f"[cmd_start] Ошибка: {e}")
 
 # Обработчики нажатий на кнопки главного меню
 @router.message(F.text == "Расписание 📝")
 @router.message(Command("schedule"))
 async def main_schedule(message: types.Message, bot, db=None):
-    if not db:
-        await message.answer("Ошибка подключения к базе данных")
-        return
-    user = await db.fetchrow("SELECT group_name FROM users WHERE user_id = $1", message.from_user.id)
-    if not user or not user['group_name']:
+    try:
+        if not db:
+            await message.answer("Ошибка подключения к базе данных")
+            logger.error(f"[main_schedule] Нет подключения к БД для пользователя {message.from_user.id}")
+            return
+        user = await db.fetchrow("SELECT group_name FROM users WHERE user_id = $1", message.from_user.id)
+        if not user or not user['group_name']:
+            builder = InlineKeyboardBuilder()
+            builder.button(text="📚 Выбрать группу", callback_data="show_groups")
+            await message.answer("Сначала выберите вашу группу:", reply_markup=builder.as_markup())
+            logger.info(f"[main_schedule] Пользователь {message.from_user.id} не выбрал группу")
+            return
+        group = user['group_name']
         builder = InlineKeyboardBuilder()
-        builder.button(text="📚 Выбрать группу", callback_data="show_groups")
-        await message.answer("Сначала выберите вашу группу:", reply_markup=builder.as_markup())
-        return
-    group = user['group_name']
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Сегодня", callback_data=f"schedule_{group}_today")
-    builder.button(text="Завтра", callback_data=f"schedule_{group}_tomorrow")
-    builder.button(text="Неделя", callback_data=f"schedule_{group}_week")
-    await message.answer("Выберите период расписания:", reply_markup=builder.as_markup())
+        builder.button(text="Сегодня", callback_data=f"schedule_{group}_today")
+        builder.button(text="Завтра", callback_data=f"schedule_{group}_tomorrow")
+        builder.button(text="Неделя", callback_data=f"schedule_{group}_week")
+        await message.answer("Выберите период расписания:", reply_markup=builder.as_markup())
+        logger.info(f"[main_schedule] Пользователь {message.from_user.id} запросил расписание для группы {group}")
+    except Exception as e:
+        logger.error(f"[main_schedule] Ошибка: {e}")
 
 @router.message(F.text == "Замены ✏️")
 async def main_replacements(message: types.Message, bot, db=None):
-    if not db:
-        await message.answer("Ошибка подключения к базе данных")
-        return
-        
-    user = await db.fetchrow("SELECT group_name FROM users WHERE user_id = $1", message.from_user.id)
-    if not user or not user['group_name']:
-        builder = InlineKeyboardBuilder()
-        builder.button(text="📚 Выбрать группу", callback_data="show_groups")
-        await message.answer(
-            "Сначала выберите вашу группу:",
-            reply_markup=builder.as_markup()
-        )
-        return
-        
-    # Check replacements for user's group
-    group = user['group_name']
-    replacements_data = fetch_replacements()
-    
-    if not replacements_data or not isinstance(replacements_data, dict) or group not in replacements_data:
-        await message.answer("✅ Замен для вашей группы нет")
-        return
-    
-    if not isinstance(replacements_data[group], dict):
-        await message.answer("✅ Замен для вашей группы нет")
-        return
-        
-    text = f"🔄 Замены для группы {group}:\n\n"
-    for date, replacements in replacements_data[group].items():
-        if not isinstance(replacements, (list, tuple)):
-            continue
-        text += f"📅 {date}:\n"
-        for rep in replacements:
-            if not isinstance(rep, dict):
+    try:
+        if not db:
+            await message.answer("Ошибка подключения к базе данных")
+            logger.error(f"[main_replacements] Нет подключения к БД для пользователя {message.from_user.id}")
+            return
+        user = await db.fetchrow("SELECT group_name FROM users WHERE user_id = $1", message.from_user.id)
+        if not user or not user['group_name']:
+            builder = InlineKeyboardBuilder()
+            builder.button(text="📚 Выбрать группу", callback_data="show_groups")
+            await message.answer("Сначала выберите вашу группу:", reply_markup=builder.as_markup())
+            logger.info(f"[main_replacements] Пользователь {message.from_user.id} не выбрал группу")
+            return
+        group = user['group_name']
+        replacements_data = fetch_replacements()
+        if not replacements_data or not isinstance(replacements_data, dict) or group not in replacements_data:
+            await message.answer("✅ Замен для вашей группы нет")
+            logger.info(f"[main_replacements] Нет замен для группы {group}")
+            return
+        if not isinstance(replacements_data[group], dict):
+            await message.answer("✅ Замен для вашей группы нет")
+            logger.info(f"[main_replacements] Нет замен для группы {group}")
+            return
+        text = f"🔄 Замены для группы {group}:\n\n"
+        for date, replacements in replacements_data[group].items():
+            if not isinstance(replacements, (list, tuple)):
                 continue
-            text += f"{'_' * 7} Занятие №{rep.get('lesson', '')} {'_' * 7}\n"
-            text += f"📚 Предмет: {rep.get('subject', '')}\n"
-            if isinstance(rep, dict) and rep.get('teacher'):
-                text += f"👤 Преподаватель: {rep.get('teacher', '')}\n"
-            text += f"🚪 Кабинет: {rep.get('room', '')}\n\n"
-            
-    await message.answer(text)
+            text += f"📅 {date}:\n"
+            for rep in replacements:
+                if not isinstance(rep, dict):
+                    continue
+                text += f"{'_' * 7} Занятие №{rep.get('lesson', '')} {'_' * 7}\n"
+                text += f"📚 Предмет: {rep.get('subject', '')}\n"
+                if rep.get('teacher'):
+                    text += f"👤 Преподаватель: {rep.get('teacher', '')}\n"
+                text += f"🚪 Кабинет: {rep.get('room', '')}\n\n"
+        await message.answer(text)
+        logger.info(f"[main_replacements] Отправлены замены для группы {group}")
+    except Exception as e:
+        logger.error(f"[main_replacements] Ошибка: {e}")
 
 from datetime import datetime
 from .parsers.lesson_times import get_current_lesson_info, get_schedule_string
@@ -479,16 +493,18 @@ async def admin_stats(message: types.Message, db=None):
         return
     users_count = await db.fetchval("SELECT COUNT(*) FROM users")
     groups_count = await db.fetchval("SELECT COUNT(*) FROM groups")
-    await message.answer(f"Статистика:\nПользователей: <b>{users_count}</b>\nГрупп: <b>{groups_count}</b>", parse_mode="HTML")
+    teachers_count = await db.fetchval("SELECT COUNT(*) FROM users WHERE role='teacher'")
+    students_count = await db.fetchval("SELECT COUNT(*) FROM users WHERE role='student'")
+    last_update = await db.fetchval("SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1")
+    await message.answer(
+        f"<b>Статистика</b>\n"
+        f"Пользователей: <b>{users_count}</b>\n"
+        f"Групп: <b>{groups_count}</b>\n"
+        f"Учителей: <b>{teachers_count}</b>\n"
+        f"Студентов: <b>{students_count}</b>\n"
+        f"Последнее обновление расписания: <b>{last_update}</b>",
+        parse_mode="HTML"
+    )
 
-@router.message(Command("groups"))
-async def admin_groups(message: types.Message, db=None):
-    if message.from_user.id not in ADMINS:
-        await message.answer("⛔️ Доступ только для админов!")
-        return
-    if not db:
-        await message.answer("Ошибка подключения к базе данных")
-        return
-    groups = await db.fetch("SELECT name FROM groups ORDER BY name")
-    text = "Список групп:\n" + "\n".join([g['name'] for g in groups])
-    await message.answer(text)
+# @router.message(Command("groups"))
+# Удалено по требованию
