@@ -8,6 +8,14 @@ import os
 from pathlib import Path
 import threading
 import logging
+from logging import Logger
+logger = logging.getLogger("schedule")
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = logging.Formatter('[%(asctime)s] %(levelname)s %(name)s: %(message)s')
+handler.setFormatter(formatter)
+if not logger.hasHandlers():
+    logger.addHandler(handler)
 
 SCHEDULE_URL = "https://www.nkptiu.ru/doc/raspisanie/raspisanie.xls"
 REPLACEMENTS_URL = "https://www.nkptiu.ru/doc/raspisanie/zameni.docx"
@@ -198,6 +206,7 @@ def format_day_schedule(group_lessons, day, replacements=None, date_str=None, la
         lines.append(f"📅 {week_number} неделя")
     except Exception:
         pass
+    # ...existing code...
     try:
         return '\n'.join(lines)
     except Exception:
@@ -320,40 +329,39 @@ def fetch_schedule():
     try:
         with _schedule_cache_lock:
             headers = get_random_headers()
-            try:
-                resp = requests.get(SCHEDULE_URL, headers=headers, timeout=30)
-                resp.raise_for_status()
-                if resp.status_code != 200 or len(resp.content) < 1000:
-                    logging.error(f"Ошибка при получении файла расписания: статус={resp.status_code}, длина={len(resp.content)}")
-                    return {}
-                file_hash = hash(resp.content)
-                if _schedule_cache is not None and _schedule_cache_hash == file_hash:
-                    logging.info("Возвращаем кэш расписания")
-                    return _schedule_cache.copy() if isinstance(_schedule_cache, dict) else {}
-                xls = BytesIO(resp.content)
-            except Exception as e:
-                logging.error(f"Ошибка при загрузке расписания: {e}")
+            resp = requests.get(SCHEDULE_URL, headers=headers, timeout=30)
+            resp.raise_for_status()
+            if resp.status_code != 200 or len(resp.content) < 1000:
+                logger.error(f"[fetch_schedule] Ошибка при получении файла расписания: статус={resp.status_code}, длина={len(resp.content)}")
                 return {}
+            file_hash = hash(resp.content)
+            # Если кэш есть и хэш совпадает — возвращаем кэш
+            if _schedule_cache is not None and _schedule_cache_hash == file_hash:
+                logger.info(f"[fetch_schedule] Кэш расписания актуален (hash={file_hash}), возврат без парсинга")
+                return _schedule_cache.copy() if isinstance(_schedule_cache, dict) else {}
+            # Если файл обновился — парсим и обновляем кэш
+            logger.info(f"[fetch_schedule] Файл расписания обновился или кэш пуст (hash={file_hash}), парсим и обновляем кэш")
+            xls = BytesIO(resp.content)
         try:
             try:
                 # Читаем только нужные колонки и фильтруем Unnamed
                 df = pd.read_excel(xls, engine='xlrd', na_values=[''])
                 # Удаляем ненужные колонки
-                df = df.loc[:, ~df.columns.str.contains('^Unnamed:|^День\.|^Интервал\.')].copy()
+                df = df.loc[:, ~df.columns.str.contains(r'^Unnamed:|^День\.|^Интервал\.')].copy()
             except Exception as e1:
                 xls.seek(0)
                 try:
                     df = pd.read_excel(xls, engine='openpyxl', na_values=[''])
-                    df = df.loc[:, ~df.columns.str.contains('^Unnamed:|^День\.|^Интервал\.')].copy()
+                    df = df.loc[:, ~df.columns.str.contains(r'^Unnamed:|^День\.|^Интервал\.')].copy()
                 except Exception as e2:
-                    logging.error(f"Ошибка чтения xls: xlrd={e1}, openpyxl={e2}")
+                    logger.error(f"[fetch_schedule] Ошибка чтения xls: xlrd={e1}, openpyxl={e2}")
                     return {}
             if df.empty or len(df.columns) < 3:
-                logging.error(f"DataFrame пустой или мало колонок: shape={df.shape}, columns={df.columns}")
+                logger.error(f"[fetch_schedule] DataFrame пустой или мало колонок: shape={df.shape}, columns={df.columns}")
                 return {}
-            logging.info(f"DataFrame загружен: shape={df.shape}, columns={list(df.columns)}")
+            logger.info(f"[fetch_schedule] DataFrame загружен: shape={df.shape}, columns={list(df.columns)}")
         except Exception as e:
-            logging.error(f"Ошибка при обработке DataFrame: {e}")
+            logger.error(f"[fetch_schedule] Ошибка при обработке DataFrame: {e}")
             return {}
         practice_rows = df[df.iloc[:, 0] == "ПРАКТИКИ"].index
         practice_data = {}
@@ -376,9 +384,9 @@ def fetch_schedule():
                             practice_info = " ".join(practice_values)
                             if group and practice_info and not any(x in practice_info.lower() for x in ['шифр', 'группы']):
                                 practice_data[group] = practice_info
-                                logging.info(f"Практика для группы {group}: {practice_info[:50]}...")
+                                logger.info(f"[fetch_schedule] Практика для группы {group}: {practice_info[:50]}...")
                 except (IndexError, TypeError, AttributeError) as e:
-                    logging.debug(f"Пропуск строки практики {idx}: {str(e)[:100]}")
+                    logger.debug(f"[fetch_schedule] Пропуск строки практики {idx}: {str(e)[:100]}")
         
     # Логирование убрано для оптимизации
         
@@ -419,10 +427,10 @@ def fetch_schedule():
                             }],
                             'updated': True  # Маркер что данные обновлены
                         }
-                        logging.info(f"Добавлена практика для группы {group_col}: {practice_info.strip()}")
+                        logger.info(f"[fetch_schedule] Добавлена практика для группы {group_col}: {practice_info.strip()}")
                         continue
             except (TypeError, AttributeError) as e:
-                logging.error(f"Ошибка при обработке практики для группы {group_col}: {e}")
+                logger.error(f"[fetch_schedule] Ошибка при обработке практики для группы {group_col}: {e}")
                 continue  # Пропускаем группу при ошибке
             #
             day_col = df.columns[0]
