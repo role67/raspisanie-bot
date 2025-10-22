@@ -252,10 +252,29 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
     group_data = schedule_data.get(group) if isinstance(schedule_data, dict) else None
     if not isinstance(group_data, dict):
         return "❌ Расписание для группы не найдено"
+    # Универсальная обработка структуры: если group_data[day] — словарь с неделями, берём текущую неделю
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        tz_msk = ZoneInfo("Europe/Moscow")
+    except ImportError:
+        from pytz import timezone
+        tz_msk = timezone("Europe/Moscow")
+    now_msk = datetime.now(tz_msk)
+    iso_week = now_msk.isocalendar().week
+    week_number = 2 if iso_week % 2 == 0 else 1
+    lessons_list = []
     if lessons is not None and isinstance(lessons, list):
         lessons_list = [l for l in lessons if isinstance(l, dict)]
     else:
-        lessons_list = [l for l in group_data.get(day, []) if isinstance(l, dict)]
+        day_data = group_data.get(day)
+        if isinstance(day_data, dict):
+            # Вложенная структура: {1: [...], 2: [...]}
+            lessons_list = [l for l in day_data.get(week_number, []) if isinstance(l, dict)]
+        elif isinstance(day_data, list):
+            lessons_list = [l for l in day_data if isinstance(l, dict)]
+        else:
+            lessons_list = []
     num_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     for lesson in lessons_list:
         if not isinstance(lesson, dict):
