@@ -85,12 +85,18 @@ async def main_replacements(message: types.Message, bot, db=None):
     group = user['group_name']
     replacements_data = fetch_replacements()
     
-    if group not in replacements_data:
+    if not replacements_data or not isinstance(replacements_data, dict) or group not in replacements_data:
+        await message.answer("✅ Замен для вашей группы нет")
+        return
+    
+    if not isinstance(replacements_data[group], dict):
         await message.answer("✅ Замен для вашей группы нет")
         return
         
     text = f"🔄 Замены для группы {group}:\n\n"
     for date, replacements in replacements_data[group].items():
+        if not isinstance(replacements, (list, tuple)):
+            continue
         text += f"📅 {date}:\n"
         for rep in replacements:
             if not isinstance(rep, dict):
@@ -225,6 +231,10 @@ def get_schedule_text(group: str, day: str = None, date_str: str = None, lessons
     from .parsers.lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
     from datetime import datetime
     schedule_data = fetch_schedule()
+    
+    if not schedule_data or not isinstance(schedule_data, dict):
+        return "❌ Ошибка получения расписания"
+        
     if group not in schedule_data:
         return "❌ Расписание для группы не найдено"
     # Определяем словарь времени
@@ -359,6 +369,10 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
     await callback.answer("⏳ Загружаю расписание...")
 
     schedule_data = fetch_schedule()
+    if not schedule_data or not isinstance(schedule_data, dict):
+        await callback.message.edit_text("❌ Ошибка получения расписания")
+        return
+        
     # today и tomorrow теперь в московском времени
     weekday_map = {
         0: 'Понедельник',
