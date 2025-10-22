@@ -123,20 +123,13 @@ async def create_tables(pool):
             
             # Добавляем индексы для оптимизации
             await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_schedule_group_day 
-                ON schedule(group_name, day_of_week);
-                
-                CREATE INDEX IF NOT EXISTS idx_schedule_group 
-                ON schedule(group_name);
-                
-                CREATE INDEX IF NOT EXISTS idx_schedule_week 
-                ON schedule(week_number);
-                
-                CREATE INDEX IF NOT EXISTS idx_schedule_subject 
-                ON schedule(subject_id);
-                
-                CREATE INDEX IF NOT EXISTS idx_schedule_teacher 
-                ON schedule(teacher_id);
+                CREATE INDEX IF NOT EXISTS idx_schedule_group_day ON schedule(group_name, day_of_week);
+                CREATE INDEX IF NOT EXISTS idx_schedule_group ON schedule(group_name);
+                CREATE INDEX IF NOT EXISTS idx_schedule_week ON schedule(week_number);
+                CREATE INDEX IF NOT EXISTS idx_schedule_subject ON schedule(subject_id);
+                CREATE INDEX IF NOT EXISTS idx_schedule_teacher ON schedule(teacher_id);
+                CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_name);
+                CREATE INDEX IF NOT EXISTS idx_replacements_group_date ON replacements(group_name, date);
             """)
             
             # Инициализируем расписание после создания таблиц
@@ -156,16 +149,12 @@ async def create_tables(pool):
 async def update_groups_list(pool, groups):
     """Обновляет список групп в базе данных"""
     async with pool.acquire() as conn:
-        # Начинаем транзакцию
-        async with conn.transaction():
-            # Очищаем таблицу
-            await conn.execute("DELETE FROM groups")
-            # Добавляем новые группы
-            if groups:
-                await conn.executemany(
-                    "INSERT INTO groups (name) VALUES ($1)",
-                    [(group,) for group in groups]
-                )
+        # Минимизируем транзакции и используем UPSERT
+        if groups:
+            await conn.executemany(
+                "INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+                [(group,) for group in groups]
+            )
 
 def clear_schedule_cache():
     """Очищает кэш расписания"""
