@@ -81,6 +81,11 @@ def format_day_schedule(group_lessons, day, replacements=None, date_str=None, la
     Форматирует расписание дня для вывода пользователю
     """
     try:
+        # Проверяем наличие информации о практике
+        if group_lessons.get('practice'):
+            practice_info = group_lessons['practice'][0].get('practice_info', '')
+            return f"📅 Практика\n\n📚 {practice_info}"
+
         if not isinstance(group_lessons, dict):
             return "❌ Ошибка в формате данных расписания"
         if not day:
@@ -331,11 +336,15 @@ def fetch_schedule():
                 return {}
         try:
             try:
+                # Читаем только нужные колонки и фильтруем Unnamed
                 df = pd.read_excel(xls, engine='xlrd', na_values=[''])
+                # Удаляем ненужные колонки
+                df = df.loc[:, ~df.columns.str.contains('^Unnamed:|^День\.|^Интервал\.')].copy()
             except Exception as e1:
                 xls.seek(0)
                 try:
                     df = pd.read_excel(xls, engine='openpyxl', na_values=[''])
+                    df = df.loc[:, ~df.columns.str.contains('^Unnamed:|^День\.|^Интервал\.')].copy()
                 except Exception as e2:
                     logging.error(f"Ошибка чтения xls: xlrd={e1}, openpyxl={e2}")
                     return {}
@@ -362,21 +371,24 @@ def fetch_schedule():
                             if pd.notna(row[i]) and str(row[i]).strip():
                                 practice_values.append(str(row[i]).strip())
                         
-                        # Если нашли хотя бы одно значение и это не заголовок "ПРАКТИКИ"
+                                # Если нашли хотя бы одно значение и это не заголовок "ПРАКТИКИ"
                         if practice_values and group != "ПРАКТИКИ":
                             practice_info = " ".join(practice_values)
-                            if group and practice_info:
+                            if group and practice_info and not any(x in practice_info.lower() for x in ['шифр', 'группы']):
                                 practice_data[group] = practice_info
-                                logging.debug(f"Добавлена информация о практике для группы {group}")
+                                logging.info(f"Практика для группы {group}: {practice_info[:50]}...")
                 except (IndexError, TypeError, AttributeError) as e:
-                    logging.error(f"Ошибка при обработке строки практики {idx}: {e}")
+                    logging.debug(f"Пропуск строки практики {idx}: {str(e)[:100]}")
         
     # Логирование убрано для оптимизации
         
-        # Заполняем пропуски времени (интервала)
+        # Заполняем пропуски времени (интервала) и оптимизируем DataFrame
         if 'Интервал' in df.columns:
             df['Интервал'] = df['Интервал'].ffill()
-            logging.debug("Заполнены пропуски в столбце 'Интервал'")
+        
+        # Оптимизируем память
+        df = df.loc[:, df.notna().any()].copy()  # Удаляем полностью пустые колонки
+        df = df.fillna('')  # Заменяем NaN на пустые строки для оптимизации памяти
 
         # Импортируем времена пар
         from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
