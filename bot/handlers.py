@@ -401,87 +401,98 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
     view_type = data[2] if len(data) > 2 else "today"
     await callback.answer("⏳ Загружаю расписание...")
 
-    schedule_data = fetch_schedule()
-    if not schedule_data or not isinstance(schedule_data, dict):
-        await callback.message.edit_text("❌ Ошибка получения расписания")
-        return
-        
-    # today и tomorrow теперь в московском времени
-    weekday_map = {
-        0: 'Понедельник',
-        1: 'Вторник',
-        2: 'Среда',
-        3: 'Четверг',
-        4: 'Пятница',
-        5: 'Суббота',
-        6: 'Воскресенье'
-    }
+    try:
+        schedule_data = fetch_schedule()
+        if not schedule_data or not isinstance(schedule_data, dict):
+            await callback.message.edit_text("❌ Ошибка получения расписания")
+            logging.error(f"[show_schedule] schedule_data invalid for group {group}")
+            return
 
-    if view_type == "today":
-        day = weekday_map[today.weekday()]
-        if today.weekday() == 6:
-            day = "Понедельник"
-        date_str = today.strftime('%d.%m.%Y')
-        group_data = schedule_data.get(group) if isinstance(schedule_data, dict) else None
-        lessons = group_data.get(day, []) if isinstance(group_data, dict) else []
-        last_update = today
-        if pool:
-            async with pool.acquire() as conn:
-                update_time = await conn.fetchval(
-                    "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
-                )
-                if update_time:
-                    last_update = update_time
-        schedule_text = get_schedule_text(group, day, date_str, lessons, last_update)
-    elif view_type == "tomorrow":
-        day = weekday_map[tomorrow.weekday()]
-        if tomorrow.weekday() == 6:
-            day = "Понедельник"
-        date_str = tomorrow.strftime('%d.%m.%Y')
-        group_data = schedule_data.get(group) if isinstance(schedule_data, dict) else None
-        lessons = group_data.get(day, []) if isinstance(group_data, dict) else []
-        last_update = today
-        if pool:
-            async with pool.acquire() as conn:
-                update_time = await conn.fetchval(
-                    "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
-                )
-                if update_time:
-                    last_update = update_time
-        schedule_text = get_schedule_text(group, day, date_str, lessons, last_update)
-    else:
-        week_days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
-        texts = []
-        last_update = today
-        if pool:
-            async with pool.acquire() as conn:
-                update_time = await conn.fetchval(
-                    "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
-                )
-                if update_time:
-                    last_update = update_time
-        for d in week_days:
+        weekday_map = {
+            0: 'Понедельник',
+            1: 'Вторник',
+            2: 'Среда',
+            3: 'Четверг',
+            4: 'Пятница',
+            5: 'Суббота',
+            6: 'Воскресенье'
+        }
+
+        if view_type == "today":
+            day = weekday_map[today.weekday()]
+            if today.weekday() == 6:
+                day = "Понедельник"
+            date_str = today.strftime('%d.%m.%Y')
             group_data = schedule_data.get(group) if isinstance(schedule_data, dict) else None
-            lessons = group_data.get(d, []) if isinstance(group_data, dict) else []
-            texts.append(get_schedule_text(group, d, None, lessons, last_update))
-        schedule_text = '\n'.join(texts)
+            lessons = group_data.get(day, []) if isinstance(group_data, dict) else []
+            last_update = today
+            if pool:
+                async with pool.acquire() as conn:
+                    update_time = await conn.fetchval(
+                        "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
+                    )
+                    if update_time:
+                        last_update = update_time
+            schedule_text = get_schedule_text(group, day, date_str, lessons, last_update)
+        elif view_type == "tomorrow":
+            day = weekday_map[tomorrow.weekday()]
+            if tomorrow.weekday() == 6:
+                day = "Понедельник"
+            date_str = tomorrow.strftime('%d.%m.%Y')
+            group_data = schedule_data.get(group) if isinstance(schedule_data, dict) else None
+            lessons = group_data.get(day, []) if isinstance(group_data, dict) else []
+            last_update = today
+            if pool:
+                async with pool.acquire() as conn:
+                    update_time = await conn.fetchval(
+                        "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
+                    )
+                    if update_time:
+                        last_update = update_time
+            schedule_text = get_schedule_text(group, day, date_str, lessons, last_update)
+        else:
+            week_days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
+            texts = []
+            last_update = today
+            if pool:
+                async with pool.acquire() as conn:
+                    update_time = await conn.fetchval(
+                        "SELECT updated_at FROM schedule_updates ORDER BY updated_at DESC LIMIT 1"
+                    )
+                    if update_time:
+                        last_update = update_time
+            for d in week_days:
+                group_data = schedule_data.get(group) if isinstance(schedule_data, dict) else None
+                lessons = group_data.get(d, []) if isinstance(group_data, dict) else []
+                texts.append(get_schedule_text(group, d, None, lessons, last_update))
+            schedule_text = '\n'.join(texts)
 
-    builder = InlineKeyboardBuilder()
-    if view_type == "today":
-        builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
-        builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
-    elif view_type == "tomorrow":
-        builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
-        builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
-    else:
-        builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
-        builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
+        builder = InlineKeyboardBuilder()
+        if view_type == "today":
+            builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
+            builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
+        elif view_type == "tomorrow":
+            builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
+            builder.button(text="На неделю 📅", callback_data=f"schedule_{group}_week")
+        else:
+            builder.button(text="⬅️ На сегодня", callback_data=f"schedule_{group}_today")
+            builder.button(text="На завтра ➡️", callback_data=f"schedule_{group}_tomorrow")
 
-    await callback.message.edit_text(
-        schedule_text,
-        reply_markup=builder.as_markup(),
-        parse_mode="HTML"
-    )
+        try:
+            await callback.message.edit_text(
+                schedule_text,
+                reply_markup=builder.as_markup(),
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logging.error(f"[show_schedule] Error sending schedule for group {group}: {e}")
+            await callback.message.edit_text("❌ Ошибка при отправке расписания. Попробуйте позже.")
+    except Exception as e:
+        logging.error(f"[show_schedule] Fatal error for group {group}: {e}")
+        try:
+            await callback.message.edit_text("❌ Критическая ошибка при обработке расписания. Попробуйте позже.")
+        except:
+            pass
 
 @router.message(Command("stats"))
 async def admin_stats(message: types.Message, db=None):
