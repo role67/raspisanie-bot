@@ -1,3 +1,169 @@
+# --- Новый парсер строки расписания ---
+def split_subject_teacher(cell: str):
+    """
+    Разделяет строку ячейки расписания на предмет, ФИО преподавателя, кабинет, подгруппу.
+    Примеры:
+    - 'Математика Иванов И.И. 101'
+    - 'Физика (1п) Петров П.П. 202'
+    - 'Информатика 303'
+    - 'История (2п)'
+    - 'Англ.яз. (1п) Сидорова А.А. 204'
+    - 'ОБЖ Петров П.П.'
+    - 'Физика (2п) 202'
+    """
+    import re
+    cell = cell.strip()
+    pattern = re.compile(
+        r"""
+        ^(?P<subject>[А-Яа-яA-Za-zЁё .\-]+?)\s*
+        (?:\((?P<subgroup>\dп)\))?\s*
+        (?P<teacher>[А-ЯЁ][а-яё]+\s[А-ЯЁ]\.[А-ЯЁ]\.)?\s*
+        (?P<room>\d{2,4})?
+        $
+        """, re.VERBOSE)
+    match = pattern.match(cell)
+    if match:
+        subject = (match.group('subject') or '').strip()
+        subgroup = (match.group('subgroup') or '').strip()
+        teacher = (match.group('teacher') or '').strip()
+        room = (match.group('room') or '').strip()
+        return subject, teacher, room, subgroup
+    # fallback: попытка вытащить кабинет
+    room_match = re.search(r"(\d{2,4})$", cell)
+    room = room_match.group(1) if room_match else ''
+    teacher_match = re.search(r"([А-ЯЁ][а-яё]+\s[А-ЯЁ]\.[А-ЯЁ]\.)", cell)
+    teacher = teacher_match.group(1) if teacher_match else ''
+    subgroup_match = re.search(r"\((\dп)\)", cell)
+    subgroup = subgroup_match.group(1) if subgroup_match else ''
+    subject = cell
+    for part in [teacher, room, f"({subgroup})"]:
+        if part:
+            subject = subject.replace(part, '').strip()
+    subject = re.sub(r"\s+", " ", subject)
+    return subject, teacher, room, subgroup
+
+# --- Форматирование расписания дня ---
+def format_day_schedule(group_lessons, day, replacements=None, date_str=None, last_update=None):
+    """
+    Форматирует расписание дня для вывода пользователю
+    """
+    try:
+        if not isinstance(group_lessons, dict):
+            return "❌ Ошибка в формате данных расписания"
+        if not day:
+            return "❌ Не указан день недели"
+        if replacements is not None and not isinstance(replacements, list):
+            replacements = None
+        if date_str and not isinstance(date_str, str):
+            try:
+                date_str = str(date_str)
+            except:
+                date_str = None
+        from datetime import datetime
+        try:
+            from zoneinfo import ZoneInfo
+            tz_msk = ZoneInfo("Europe/Moscow")
+        except ImportError:
+            from pytz import timezone
+            tz_msk = timezone("Europe/Moscow")
+        now_msk = datetime.now(tz_msk)
+        weekday = now_msk.weekday()
+        iso_week = now_msk.isocalendar().week
+        if weekday == 6 and now_msk.hour >= 0:
+            week_number = 1 if (iso_week + 1) % 2 != 0 else 2
+        else:
+            week_number = 2 if iso_week % 2 == 0 else 1
+    except Exception:
+        return "❌ Ошибка при обработке данных расписания"
+    from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
+    day_map = {
+        'Понедельник': 'Понедельник',
+        'Вторник': 'Вторник',
+        'Среда': 'Среда',
+        'Четверг': 'Четверг',
+        'Пятница': 'Пятница',
+        'Суббота': 'Суббота'
+    }
+    if day == 'Понедельник':
+        times_dict = LESSON_TIMES
+    elif day == 'Суббота':
+        times_dict = SATURDAY_TIMES
+    else:
+        times_dict = WEEKDAY_TIMES
+    try:
+        if date_str:
+            lines = [f"📅 {date_str} | {day_map.get(day, day)}\n"]
+        else:
+            lines = [f"📅 {day_map.get(day, day)}\n"]
+        if not group_lessons or day not in group_lessons:
+            lines.append("\n❌ Расписание на этот день не найдено")
+            return '\n'.join(lines)
+        lessons = group_lessons.get(day, {}).get(week_number, [])
+        if not isinstance(lessons, list):
+            lines.append("\n❌ Ошибка в формате расписания")
+            return '\n'.join(lines)
+        for idx, lesson in enumerate(lessons, 1):
+            try:
+                if not isinstance(lesson, dict):
+                    continue
+                subject = lesson.get('subject', '').strip()
+                teacher = lesson.get('teacher', '').strip()
+                room = lesson.get('room', '').strip()
+                time = lesson.get('time', '').strip()
+                if not subject or subject == "-----":
+                    continue
+            except Exception:
+                continue
+            time_str = times_dict.get(time, time)
+            lesson_str = f"{idx}️⃣ {subject} | {time_str}"
+            lines.append(lesson_str)
+            if teacher:
+                lines.append(f"👤 {teacher}")
+            if room:
+                lines.append(f"🚪 {room}")
+            lines.append("")
+    except Exception:
+        pass
+    try:
+        if replacements:
+            if not isinstance(replacements, list):
+                lines.append("❌ Ошибка при обработке замен")
+            else:
+                lines.append("🔄 Замены")
+                for idx, rep in enumerate(replacements, 1):
+                    try:
+                        if not isinstance(rep, dict):
+                            continue
+                        rep_subject = rep.get('subject', '').strip()
+                        rep_lesson = rep.get('lesson', '').strip()
+                        rep_room = rep.get('room', '').strip()
+                        rep_teacher = rep.get('teacher', '').strip()
+                        if not rep_subject or not rep_lesson:
+                            continue
+                        lines.append(f"📚 {rep_subject} вместо {rep_lesson}")
+                        if rep_teacher:
+                            lines.append(f"👤 {rep_teacher}")
+                        if rep_room:
+                            lines.append(f"🚪 Каб. {rep_room}")
+                        lines.append("")
+                    except Exception:
+                        continue
+    except Exception:
+        lines.append("❌ Ошибка при обработке замен")
+    try:
+        if last_update:
+            try:
+                update_time = last_update.strftime('%d.%m.%Y %H:%M')
+                lines.append(f"🕒 Обновлено: {update_time}")
+            except Exception:
+                lines.append("🕒 Время обновления недоступно")
+        lines.append(f"📅 {week_number} неделя")
+    except Exception:
+        pass
+    try:
+        return '\n'.join(lines)
+    except Exception:
+        return "❌ Ошибка при формировании расписания"
 
 import pandas as pd
 import requests
@@ -260,22 +426,54 @@ def fetch_schedule():
                     i += 1
                     continue
                 # Улучшенный парсинг предмета и преподавателя
-                def split_subject_teacher(val):
-                    val = str(val).strip()
-                    if not val or val.lower() == 'nan':
-                        return '', ''
-                    # Если есть пробел, делим на предмет и преподавателя
-                    parts = val.split()
-                    if len(parts) > 1:
-                        # Если первая часть похожа на предмет (есть цифры/точки/буквы), а вторая на фамилию
-                        if any(c.isdigit() for c in parts[0]) or '.' in parts[0]:
-                            subject = parts[0]
-                            teacher = ' '.join(parts[1:])
+                subject1, teacher1, room1, subgroup1 = split_subject_teacher(cell_value)
+                subject2 = ''
+                teacher2 = ''
+                room2 = ''
+                subgroup2 = ''
+                if i+1 < len(df):
+                    next_row = df.iloc[i+1]
+                    next_value = str(next_row.get(group_col, '')).strip()
+                    if next_value and next_value != "-----":
+                        subject2, teacher2, room2, subgroup2 = split_subject_teacher(next_value)
+                        if subject2 and not teacher2 and i+2 < len(df):
+                            third_row = df.iloc[i+2]
+                            third_value = str(third_row.get(group_col, '')).strip()
+                            _, teacher2, room2, subgroup2 = split_subject_teacher(third_value)
+                            i += 3
                         else:
-                            subject = ' '.join(parts[:-1])
-                            teacher = parts[-1]
-                        return subject, teacher
-                    return val, ''
+                            i += 2
+                    else:
+                        i += 1
+                else:
+                    i += 1
+                room = room1 if room1 else (cabinet_value if cabinet_value and cabinet_value.lower() != 'nan' else '—')
+                lesson_dict_1 = {
+                    'lesson_number': lesson_counter,
+                    'time': time,
+                    'subject': subject1,
+                    'teacher': teacher1,
+                    'room': room,
+                    'subgroup': subgroup1,
+                    'week_number': 1,
+                    'is_subgroup': bool(subgroup1),
+                    'file_hash': file_hash
+                }
+                week_lessons[1].append(lesson_dict_1)
+                if subject2:
+                    room2_final = room2 if room2 else room
+                    lesson_dict_2 = {
+                        'lesson_number': lesson_counter,
+                        'time': time,
+                        'subject': subject2,
+                        'teacher': teacher2,
+                        'room': room2_final,
+                        'subgroup': subgroup2,
+                        'week_number': 2,
+                        'is_subgroup': bool(subgroup2),
+                        'file_hash': file_hash
+                    }
+                    week_lessons[2].append(lesson_dict_2)
 
                 subject1, teacher1 = split_subject_teacher(cell_value)
                 subject2 = ''
@@ -493,206 +691,24 @@ def extract_groups_from_schedule():
             return []
             
         try:
-            # Получаем список групп из ключей словаря
             groups = list(schedule_data.keys())
             if not groups:
-                print("В расписании не найдено ни одной группы")
                 return []
-                
-            # Фильтруем и очищаем названия групп
             cleaned_groups = []
             for group in groups:
                 try:
                     group = str(group).strip()
                     if group and group not in ['Время', 'Дата', 'День', '']:
                         cleaned_groups.append(group)
-                except (AttributeError, TypeError) as e:
-                    print(f"Ошибка при обработке названия группы: {e}")
+                except (AttributeError, TypeError):
                     continue
-                    
             if not cleaned_groups:
-                print("После фильтрации не осталось групп")
                 return []
-                
-            return sorted(list(set(cleaned_groups)))  # Убираем дубликаты и сортируем
-            
-        except Exception as e:
-            print(f"Ошибка при обработке данных расписания: {e}")
+            return sorted(list(set(cleaned_groups)))
+        except Exception:
             return []
-            
-    except Exception as e:
-        print(f"Критическая ошибка при извлечении групп: {e}")
-        return []
-
-# Для теста:
-
-def format_day_schedule(group_lessons, day, date_str=None, replacements=None, last_update=None):
-    """
-    Форматирует расписание для одного дня с заменами и временем обновления.
-    group_lessons: словарь с расписанием по дням недели
-    day: день недели ('Понедельник', ...)
-    date_str: строка с датой в формате dd.mm.yyyy
-    replacements: список замен для этого дня (если есть)
-    last_update: datetime
-    
-    Returns:
-        str: Отформатированное расписание для отображения пользователю
-    """
-    try:
-        if not isinstance(group_lessons, dict):
-            print("Ошибка: group_lessons должен быть словарем")
-            return "❌ Ошибка в формате данных расписания"
-        if not day:
-            print("Ошибка: не указан день недели")
-            return "❌ Не указан день недели"
-        if replacements is not None and not isinstance(replacements, list):
-            print("Ошибка: replacements должен быть списком")
-            replacements = None
-        if date_str and not isinstance(date_str, str):
-            print("Предупреждение: date_str не является строкой")
-            try:
-                date_str = str(date_str)
-            except:
-                date_str = None
-        # Определяем текущую неделю
-        from datetime import datetime
-        try:
-            from zoneinfo import ZoneInfo
-            tz_msk = ZoneInfo("Europe/Moscow")
-        except ImportError:
-            from pytz import timezone
-            tz_msk = timezone("Europe/Moscow")
-        now_msk = datetime.now(tz_msk)
-        # Неделя начинается с понедельника 00:00 МСК
-        # Если сегодня воскресенье, то с 00:00 следующего дня будет первая неделя
-        # week_number = 2 если текущая неделя четная, иначе 1
-        # Но если сегодня воскресенье, то с полуночи будет новая неделя
-        weekday = now_msk.weekday() # 0 - понедельник, 6 - воскресенье
-        iso_week = now_msk.isocalendar().week
-        if weekday == 6 and now_msk.hour >= 0:
-            # Воскресенье после полуночи — готовимся к новой неделе
-            week_number = 1 if (iso_week + 1) % 2 != 0 else 2
-        else:
-            week_number = 2 if iso_week % 2 == 0 else 1
-    except Exception as e:
-        print(f"Ошибка при валидации входных данных: {e}")
-        return "❌ Ошибка при обработке данных расписания"
-    from .lesson_times import LESSON_TIMES, WEEKDAY_TIMES, SATURDAY_TIMES
-    from datetime import datetime
-
-    day_map = {
-        'Понедельник': 'Понедельник',
-        'Вторник': 'Вторник',
-        'Среда': 'Среда',
-        'Четверг': 'Четверг',
-        'Пятница': 'Пятница',
-        'Суббота': 'Суббота'
-    }
-
-    # Определяем словарь времени
-    if day == 'Понедельник':
-        times_dict = LESSON_TIMES
-    elif day == 'Суббота':
-        times_dict = SATURDAY_TIMES
-    else:
-        times_dict = WEEKDAY_TIMES
-
-    try:
-        # Заголовок с датой
-        if date_str:
-            lines = [f"📅 {date_str} | {day_map.get(day, day)}\n"]
-        else:
-            lines = [f"📅 {day_map.get(day, day)}\n"]
-        # Проверяем наличие расписания
-        if not group_lessons or day not in group_lessons:
-            lines.append("\n❌ Расписание на этот день не найдено")
-            return '\n'.join(lines)
-        lessons = group_lessons.get(day, {}).get(week_number, [])
-        if not isinstance(lessons, list):
-            lines.append("\n❌ Ошибка в формате расписания")
-            return '\n'.join(lines)
-        # Обработка уроков
-        for idx, lesson in enumerate(lessons, 1):
-            try:
-                if not isinstance(lesson, dict):
-                    continue
-                subject = lesson.get('subject', '').strip()
-                teacher = lesson.get('teacher', '').strip()
-                room = lesson.get('room', '').strip()
-                time = lesson.get('time', '').strip()
-                if not subject or subject == "-----":
-                    continue
-            except Exception:
-                continue
-            time_str = times_dict.get(time, time)
-            lesson_str = f"{idx}️⃣ {subject} | {time_str}"
-            lines.append(lesson_str)
-            if teacher:
-                lines.append(f"👤 {teacher}")
-            if room:
-                lines.append(f"🚪 {room}")
-            lines.append("")
     except Exception:
-        pass
-
-    # Замены
-    try:
-        if replacements:
-            if not isinstance(replacements, list):
-                print("Ошибка: replacements должен быть списком")
-                lines.append("❌ Ошибка при обработке замен")
-            else:
-                lines.append("🔄 Замены")
-                for idx, rep in enumerate(replacements, 1):
-                    try:
-                        if not isinstance(rep, dict):
-                            print(f"Ошибка: некорректный формат замены #{idx}")
-                            continue
-                            
-                        rep_subject = rep.get('subject', '').strip()
-                        rep_lesson = rep.get('lesson', '').strip()
-                        rep_room = rep.get('room', '').strip()
-                        rep_teacher = rep.get('teacher', '').strip()
-                        
-                        if not rep_subject or not rep_lesson:
-                            print(f"Пропуск замены #{idx}: отсутствует предмет или номер урока")
-                            continue
-                            
-                        # Формат: "История вместо Физики"
-                        lines.append(f"📚 {rep_subject} вместо {rep_lesson}")
-                        if rep_teacher:
-                            lines.append(f"👤 {rep_teacher}")
-                        if rep_room:
-                            lines.append(f"🚪 Каб. {rep_room}")
-                        lines.append("")
-                        
-                    except Exception as e:
-                        print(f"Ошибка при обработке замены #{idx}: {e}")
-                        continue
-                        
-    except Exception as e:
-        print(f"Ошибка при обработке замен: {e}")
-        lines.append("❌ Ошибка при обработке замен")
-
-    # Время обновления
-    try:
-        if last_update:
-            try:
-                update_time = last_update.strftime('%d.%m.%Y %H:%M')
-                lines.append(f"🕒 Обновлено: {update_time}")
-            except Exception as e:
-                print(f"Ошибка при форматировании времени обновления: {e}")
-                lines.append("🕒 Время обновления недоступно")
-        # Добавляем номер недели
-        lines.append(f"📅 {week_number} неделя")
-    except Exception as e:
-        print(f"Ошибка при добавлении времени обновления: {e}")
-
-    try:
-        return '\n'.join(lines)
-    except Exception as e:
-        print(f"Ошибка при формировании итогового текста: {e}")
-        return "❌ Ошибка при формировании расписания"
+        return []
 
 # Для теста:
 if __name__ == "__main__":
