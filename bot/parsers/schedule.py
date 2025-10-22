@@ -7,6 +7,7 @@ import random
 import os
 from pathlib import Path
 import threading
+import logging
 
 SCHEDULE_URL = "https://www.nkptiu.ru/doc/raspisanie/raspisanie.xls"
 REPLACEMENTS_URL = "https://www.nkptiu.ru/doc/raspisanie/zameni.docx"
@@ -158,16 +159,19 @@ def fetch_schedule():
     try:
         with _schedule_cache_lock:
             headers = get_random_headers()
-            resp = requests.get(SCHEDULE_URL, headers=headers, timeout=30)
-            resp.raise_for_status()
-            if resp.status_code != 200 or len(resp.content) < 1000:
+            try:
+                resp = requests.get(SCHEDULE_URL, headers=headers, timeout=30)
+                resp.raise_for_status()
+                if resp.status_code != 200 or len(resp.content) < 1000:
+                    logging.error("Ошибка при получении файла расписания: неверный статус или пустой файл")
+                    return {}
+                file_hash = hash(resp.content)
+                if _schedule_cache is not None and _schedule_cache_hash == file_hash:
+                    return _schedule_cache.copy() if isinstance(_schedule_cache, dict) else {}
+                xls = BytesIO(resp.content)
+            except Exception as e:
+                logging.error(f"Ошибка при загрузке расписания: {e}")
                 return {}
-            file_hash = hash(resp.content)
-            if _schedule_cache is not None and _schedule_cache_hash == file_hash:
-                return _schedule_cache
-            xls = BytesIO(resp.content)
-    except Exception:
-        return {}
         try:
             try:
                 df = pd.read_excel(xls, engine='xlrd', na_values=[''])
