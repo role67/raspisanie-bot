@@ -372,7 +372,7 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
             day = "Понедельник"
         date_str = today.strftime('%d.%m.%Y')
         group_data = schedule_data.get(group)
-        lessons = group_data.get(day, []) if group_data else []
+        lessons = group_data.get(day, []) if isinstance(group_data, dict) else []
         last_update = today
         if pool:
             async with pool.acquire() as conn:
@@ -388,7 +388,7 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
             day = "Понедельник"
         date_str = tomorrow.strftime('%d.%m.%Y')
         group_data = schedule_data.get(group)
-        lessons = group_data.get(day, []) if group_data else []
+        lessons = group_data.get(day, []) if isinstance(group_data, dict) else []
         last_update = today
         if pool:
             async with pool.acquire() as conn:
@@ -411,7 +411,7 @@ async def show_schedule(callback: types.CallbackQuery, state: FSMContext, pool=N
                     last_update = update_time
         for d in week_days:
             group_data = schedule_data.get(group)
-            lessons = group_data.get(d, []) if group_data else []
+            lessons = group_data.get(d, []) if isinstance(group_data, dict) else []
             texts.append(get_schedule_text(group, d, None, lessons, last_update))
         schedule_text = '\n'.join(texts)
 
