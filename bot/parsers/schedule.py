@@ -1,5 +1,6 @@
 import pandas as pd
 import requests
+import re
 from io import BytesIO
 from docx import Document
 import random
@@ -43,18 +44,7 @@ _schedule_cache_hash = None
 
 # --- Новый парсер строки расписания ---
 def split_subject_teacher(cell: str):
-    """
-    Разделяет строку ячейки расписания на предмет, ФИО преподавателя, кабинет, подгруппу.
-    Примеры:
-    - 'Математика Иванов И.И. 101'
-    - 'Физика (1п) Петров П.П. 202'
-    - 'Информатика 303'
-    - 'История (2п)'
-    - 'Англ.яз. (1п) Сидорова А.А. 204'
-    - 'ОБЖ Петров П.П.'
-    - 'Физика (2п) 202'
-    """
-    import re
+
     cell = cell.strip()
     pattern = re.compile(
         r"""
@@ -429,54 +419,99 @@ def fetch_schedule():
                 else:
                     i += 1
                     continue
-                # Если cell_value == -----, значит пары нет на этой неделе
-                if cell_value == "-----":
-                    i += 1
-                    continue
-                # Парсим первую и вторую неделю
-                subject1, teacher1, room1, subgroup1 = split_subject_teacher(cell_value)
-                room1_final = room1 if room1 else (cabinet_value if cabinet_value and cabinet_value.lower() != 'nan' else '—')
-                lesson_dict_1 = {
-                    'lesson_number': lesson_counter,
-                    'time': time,
-                    'subject': subject1,
-                    'teacher': teacher1,
-                    'room': room1_final,
-                    'subgroup': subgroup1,
-                    'week_number': 1,
-                    'is_subgroup': bool(subgroup1),
-                    'file_hash': file_hash
-                }
-                week_lessons[1].append(lesson_dict_1)
 
-                subject2 = ''
-                teacher2 = ''
-                room2 = ''
-                subgroup2 = ''
-                if i+1 < len(df):
-                    next_row = df.iloc[i+1]
-                    next_value = str(next_row.get(group_col, '')).strip()
-                    next_cabinet_value = str(next_row.get(cabinet_col, '')).strip()
-                    if next_value and next_value != "-----":
-                        subject2, teacher2, room2, subgroup2 = split_subject_teacher(next_value)
-                        room2_final = room2 if room2 else (next_cabinet_value if next_cabinet_value and next_cabinet_value.lower() != 'nan' else '—')
-                        lesson_dict_2 = {
-                            'lesson_number': lesson_counter,
-                            'time': time,
-                            'subject': subject2,
-                            'teacher': teacher2,
-                            'room': room2_final,
-                            'subgroup': subgroup2,
-                            'week_number': 2,
-                            'is_subgroup': bool(subgroup2),
+                # Новый алгоритм: ищем разделитель '-----' и распределяем пары по неделям
+                # Собираем блок пар для дня
+                day_pairs = []
+                day_cabinets = []
+                day_times = []
+                start_i = i
+                while i < len(df):
+                    row = df.iloc[i]
+                    pair_value = str(row.get(group_col, '')).strip()
+                    pair_cabinet = str(row.get(cabinet_col, '')).strip()
+                    pair_time = str(row.get('Интервал', '')).strip()
+                    if not pair_time or pair_value.lower() == 'nan':
+                        i += 1
+                        continue
+                    if pair_value == "-----":
+                        break
+                    day_pairs.append(pair_value)
+                    day_cabinets.append(pair_cabinet)
+                    day_times.append(pair_time)
+                    i += 1
+
+                # Проверяем, есть ли разделитель '-----' в этом дне
+                has_split = False
+                split_index = None
+                for idx in range(start_i, i):
+                    row = df.iloc[idx]
+                    if str(row.get(group_col, '')).strip() == "-----":
+                        has_split = True
+                        split_index = idx - start_i
+                        break
+
+                # Если есть разделитель, распределяем пары по неделям
+                if has_split:
+                    # Если '-----' над предметом (то есть split_index == 0)
+                    if split_index == 0:
+                        # 1 неделя — пары до разделителя, 2 неделя — после
+                        for j in range(len(day_pairs)):
+                            subject, teacher, room, subgroup = split_subject_teacher(day_pairs[j])
+                            room_final = room if room else (day_cabinets[j] if day_cabinets[j] and day_cabinets[j].lower() != 'nan' else '—')
+                            lesson_dict = {
+                                'lesson_number': j+1,
+                                'time': day_times[j],
+                                'subject': subject,
+                                'teacher': teacher,
+                                'room': room_final,
+                                'subgroup': subgroup,
+                                'week_number': 2 if j >= split_index else 1,
+                                'is_subgroup': bool(subgroup),
+                                'file_hash': file_hash
+                            }
+                            if j < split_index:
+                                week_lessons[1].append(lesson_dict)
+                            else:
+                                week_lessons[2].append(lesson_dict)
+                    else:
+                        # 1 неделя — пары до разделителя + предмет над '-----', 2 неделя — только пары до разделителя
+                        for j in range(len(day_pairs)):
+                            subject, teacher, room, subgroup = split_subject_teacher(day_pairs[j])
+                            room_final = room if room else (day_cabinets[j] if day_cabinets[j] and day_cabinets[j].lower() != 'nan' else '—')
+                            lesson_dict = {
+                                'lesson_number': j+1,
+                                'time': day_times[j],
+                                'subject': subject,
+                                'teacher': teacher,
+                                'room': room_final,
+                                'subgroup': subgroup,
+                                'week_number': 1 if j <= split_index else 2,
+                                'is_subgroup': bool(subgroup),
+                                'file_hash': file_hash
+                            }
+                            if j <= split_index:
+                                week_lessons[1].append(lesson_dict)
+                            else:
+                                week_lessons[2].append(lesson_dict)
+                    i += 1  # пропускаем строку с '-----'
+                else:
+                    # Нет разделителя — обычная обработка
+                    for j in range(len(day_pairs)):
+                        subject, teacher, room, subgroup = split_subject_teacher(day_pairs[j])
+                        room_final = room if room else (day_cabinets[j] if day_cabinets[j] and day_cabinets[j].lower() != 'nan' else '—')
+                        lesson_dict = {
+                            'lesson_number': j+1,
+                            'time': day_times[j],
+                            'subject': subject,
+                            'teacher': teacher,
+                            'room': room_final,
+                            'subgroup': subgroup,
+                            'week_number': 1,
+                            'is_subgroup': bool(subgroup),
                             'file_hash': file_hash
                         }
-                        week_lessons[2].append(lesson_dict_2)
-                        i += 2
-                    else:
-                        i += 1
-                else:
-                    i += 1
+                        week_lessons[1].append(lesson_dict)
             # Добавляем последний день
             if current_day and (week_lessons[1] or week_lessons[2]):
                 if not isinstance(schedule_data[group_col], dict):
